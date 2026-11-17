@@ -1,0 +1,5 @@
+include scripts/build_rdp.py
+include scripts/build_deb.py
+recursive-include src/remote_manager/protocols/native *.c *.h
+global-exclude *.so
+include tests/rdp_native_harness.c

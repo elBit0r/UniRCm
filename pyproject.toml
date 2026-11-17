@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unix-remote-manager"
+version = "0.0.1"
+description = "Uni Remote Connection Manager (UniRCm)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = []
+dependencies = ["PyQt6>=6.6,<7", "sqlcipher3-binary==0.6.0", "pyte==0.8.2", "telnetlib3==5.0.2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "pytest-qt>=4.4,<6"]
+
+[project.scripts]
+unircm = "remote_manager.app:main"
+unix-remote-manager = "remote_manager.app:main"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["remote_manager*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+
+[tool.setuptools.package-data]
+"remote_manager.protocols" = ["native/*.c", "native/*.h"]
+"remote_manager.ui" = ["assets/unircm.png", "assets/papirus/*.svg", "assets/papirus/LICENSE", "assets/papirus/SOURCES.json"]
