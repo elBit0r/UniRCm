@@ -3,7 +3,7 @@
 
 Run on the Debian release/architecture being targeted, using its system Python.
 Build prerequisites: python3-pip python3-setuptools python3-wheel python3-pyqt6
-  dpkg-dev binutils (plus build-essential pkg-config freerdp3-dev for --with-rdp).
+  dpkg-dev binutils (plus build-essential pkg-config freerdp3-dev zlib1g-dev for --with-rdp).
 Example: /usr/bin/python3 scripts/build_deb.py --maintainer 'Name <email@example.org>'
 """
 from __future__ import annotations
@@ -102,6 +102,9 @@ def main() -> int:
         shutil.copy2(ROOT / 'README.md', doc / 'README.md')
         write(doc / 'copyright', 'UniRCm application code: GPL-3.0-or-later.\nSee LICENSE for the complete GPLv3 terms.\nThird-party components retain their own licenses; see the bundled\n*.dist-info license files and remote_manager/ui/assets/papirus/LICENSE\nand SOURCES.json under /usr/lib/unircm.\n')
         # Derive native library constraints from the binaries actually shipped.
+        # Mark the staging root so dpkg-shlibdeps recognizes bundled libraries
+        # (such as SQLCipher's libcrypto) as part of this same package.
+        (stage / 'DEBIAN').mkdir()
         write(work / 'debian/control', 'Source: unircm\nSection: net\nPriority: optional\nMaintainer: ' + args.maintainer + '\n\nPackage: unircm\nArchitecture: any\nDescription: Remote connection manager\n')
         binaries = sorted(private.rglob('*.so')) + sorted(private.rglob('*.so.*'))
         native_dependencies = ''

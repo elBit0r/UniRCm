@@ -453,9 +453,16 @@ class MainWindow(QMainWindow):
         HelpDialog(self).exec()
 
     def show_about(self):
-        QMessageBox.about(self, self.tr('About UniRCm'),
-            f"{APP_NAME} ({APP_SHORT_NAME})\n{self.tr('Version')}: {__version__}\n\n"
-            + self.tr('SSH and Telnet connection manager with an embedded terminal and encrypted SQLCipher configuration.'))
+        description = self.tr('SSH and Telnet connection manager with an embedded terminal and encrypted SQLCipher configuration.')
+        QMessageBox.about(
+            self, self.tr('About UniRCm'),
+            f"<p><b>{APP_NAME} ({APP_SHORT_NAME})</b><br>"
+            f"{self.tr('Version')}: {__version__}</p>"
+            f"<p>{description}</p>"
+            f"<p>{self.tr('License')}: GPL-3.0-or-later<br>"
+            f"{self.tr('Email')}: <a href='mailto:victor@unirc.eu'>victor@unirc.eu</a><br>"
+            f"{self.tr('Website')}: <a href='https://www.unirc.eu'>www.unirc.eu</a></p>",
+        )
 
     def can_reconnect(self, terminal):
         return (terminal is not None and not terminal.is_running() and self.vault is not None

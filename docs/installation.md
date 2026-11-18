@@ -31,7 +31,7 @@ the build fails rather than substituting SQLite. Native runtime dependencies are
 computed with `dpkg-shlibdeps`; the package requires the builder's Python minor version.
 
 SSH is included by default. To include the RDP bridge, also install
-`build-essential pkg-config freerdp3-dev` and pass `--with-rdp`.
+`build-essential pkg-config freerdp3-dev zlib1g-dev` and pass `--with-rdp`.
 No compiler or pip invocation runs during package installation or application startup.
 Use `sudo apt install ./dist/unircm_VERSION_ARCH.deb` on a clean matching Debian
 system to validate the resulting package. Debian installation/runtime validation

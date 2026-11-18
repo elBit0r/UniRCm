@@ -87,6 +87,9 @@ def test_file_help_about_actions(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(QMessageBox, 'about', lambda parent, title, text: about.append(text))
     window.actions['About'].trigger()
     assert APP_NAME in about[0] and __version__ in about[0]
+    assert 'GPL-3.0-or-later' in about[0]
+    assert "href='mailto:victor@unirc.eu'" in about[0]
+    assert "href='https://www.unirc.eu'" in about[0]
     window.actions['Exit'].trigger()
     assert not window.isVisible() and window.vault is None
 

@@ -19,9 +19,7 @@ Updated 2026-11-17. [PROJECT.md](PROJECT.md) defines product scope.
 - [ ] Measure terminal responsiveness and CPU usage with continuous remote
   output, including aafire.
 - [ ] Verify VNC authentication, rendering and input against a real VNC server.
-- [ ] Select a Debian release and architecture, then build and install the
-  `.deb` on Debian. The builder is implemented. Ubuntu checks covered syntax,
-  help and rejection of non-Debian builds.
+- [ ] Verify installation and real sessions on a Debian 13 amd64 desktop.
 - [ ] Review distribution dependencies and bundled artwork obligations.
   The project license is GPL-3.0-or-later.
 - [ ] Validate FreeBSD builds and runtime, and check manylinux portability.
@@ -74,6 +72,22 @@ Updated 2026-11-17. [PROJECT.md](PROJECT.md) defines product scope.
 - RDP file/image clipboard and pointer warping remain unsupported.
 
 ## Recorded Linux verification
+
+- On Ubuntu 26.04.1, the existing FreeRDP 3 bridge loaded with ABI 3.
+  Of 28 targeted RDP checks, 27 passed, including loopback TLS rejection and
+  connection cleanup. The native channel harness was skipped because the
+  FreeRDP development headers were unavailable. No authenticated RDP session
+  was exercised.
+
+- Built `unircm_0.1.0-1_amd64.deb` with FreeRDP on Debian 13. In a separate
+  rootless Debian environment, dpkg configured the package after an
+  ssh-agent ownership override for the user namespace. The installed launcher
+  opened the startup dialog offscreen, SQLCipher reported 4.12.0, and the
+  FreeRDP bridge loaded with ABI 3.
+
+- Built and installed the 0.1.0 wheel in a temporary directory. Four targeted
+  checks passed for package metadata, launchers, bundled notices and the Help
+  menu's About dialog with license, email and website.
 
 - First Git snapshot prepared with local IDE files, vaults, keys and build
   outputs excluded. Packaging metadata, GUI startup, vaults, archives and

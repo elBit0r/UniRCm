@@ -439,6 +439,7 @@ ITALIAN.update({
     'Shift': 'Maiusc',
     'File': 'File', 'Session': 'Sessione', 'View': 'Visualizza', 'Help': 'Aiuto',
     'About': 'Informazioni', 'About UniRCm': 'Informazioni su UniRCm', 'Version': 'Versione',
+    'License': 'Licenza', 'Email': 'Email', 'Website': 'Sito web',
     'Exit': 'Esci', 'Disconnect': 'Disconnetti', 'Close tab': 'Chiudi scheda',
     'Find connection': 'Cerca connessione', 'Toolbar': 'Barra degli strumenti', 'Status bar': 'Barra di stato',
     'Show or hide the connection toolbar.': 'Mostra o nascondi la barra degli strumenti delle connessioni.',
