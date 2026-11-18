@@ -13,7 +13,7 @@ from .rdp_options import RdpOptions
 
 from PyQt6.QtWidgets import (QApplication, QFontComboBox, QColorDialog, QTabWidget, QVBoxLayout, QWidget,QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                             QFormLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QFrame,
-                            QMessageBox, QProgressBar, QPushButton, QSpinBox)
+                            QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox)
 
 from remote_manager.storage.archive import ArchiveVault, RecoveryConflict
 from remote_manager.storage.vault import Vault, SSH_DEFAULTS, resolve_ssh, validate_ssh_settings, validate_group_appearance
@@ -247,6 +247,42 @@ def make_tabs_scrollable(tabs):
         wrapper = QVBoxLayout(page)
         wrapper.setContentsMargins(0, 0, 0, 0)
         wrapper.addWidget(scroll)
+
+
+class LocalTerminalProfileDialog(QDialog):
+    def __init__(self, profile, save_profile, parent=None):
+        super().__init__(parent)
+        self.save_profile = save_profile
+        self.setWindowTitle(self.tr('Local terminal profile'))
+        self.resize(520, 330)
+        form = QFormLayout(self)
+        self.name = QLineEdit(profile.get('name', ''))
+        self.directory = QLineEdit(profile.get('directory', ''))
+        self.directory.setPlaceholderText('~')
+        self.commands = QPlainTextEdit(profile.get('commands', ''))
+        self.commands.setPlaceholderText(self.tr('Commands to run in the interactive shell when opened'))
+        form.addRow(self.tr('Name'), self.name)
+        form.addRow(self.tr('Working directory'), self.directory)
+        form.addRow(self.tr('Startup commands'), self.commands)
+        self.error = QLabel()
+        self.error.setWordWrap(True)
+        form.addRow(self.error)
+        buttons = NamedButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        decorate_buttons(buttons)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def accept(self):
+        try:
+            self.save_profile(self.name.text(), self.directory.text(), self.commands.toPlainText())
+        except ValueError as error:
+            self.error.setText(self.tr(str(error)))
+            return
+        except Exception:
+            self.error.setText(self.tr('Unable to save the local terminal profile.'))
+            return
+        super().accept()
 
 
 class ProfileDialog(QDialog):
@@ -1001,9 +1037,10 @@ class TerminalAppearanceDialog(QDialog):
         buttons = NamedButtonBox(QDialogButtonBox.StandardButton.Cancel)
         decorate_buttons(buttons)
         self.apply_button = buttons.addButton(self.tr('Apply'), QDialogButtonBox.ButtonRole.AcceptRole)
-        self.save_button = buttons.addButton(self.tr('Save for this connection'), QDialogButtonBox.ButtonRole.ActionRole)
         self.apply_button.clicked.connect(self.accept)
-        self.save_button.clicked.connect(self.save)
+        if save_options is not None:
+            self.save_button = buttons.addButton(self.tr('Save for this connection'), QDialogButtonBox.ButtonRole.ActionRole)
+            self.save_button.clicked.connect(self.save)
         decorate_buttons(buttons)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)

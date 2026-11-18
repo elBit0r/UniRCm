@@ -7,6 +7,143 @@ from remote_manager.ui.session_workspace import SessionWorkspace
 from test_ssh import ssh_server
 
 
+def test_prepare_workspace_without_sessions(qtbot, tmp_path):
+    path = tmp_path / 'prepared.db'
+    window = MainWindow(Vault(path, 'master'), path)
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window.tabs.count() == 0
+    window.actions['Split vertically'].trigger()
+    workspace = window.tabs.currentWidget()
+    assert isinstance(workspace, SessionWorkspace)
+    assert workspace.mode == 'side'
+    assert len(workspace.empty_panes) == 2
+
+    window.actions['Split horizontally'].trigger()
+    assert workspace.mode == 'stack'
+    window.actions['Grid 2 × 2'].trigger()
+    assert window.tabs.count() == 1
+    assert workspace.mode == 'grid'
+    assert [pane.slot for pane in workspace.empty_panes] == [0, 1, 2, 3]
+    assert not window.actions['Disconnect'].isEnabled()
+    assert not window.actions['Reconnect'].isEnabled()
+
+    menu = QMenu(window)
+    window.populate_workspace_menu(menu, workspace)
+    assert not any(action.isEnabled() for action in menu.actions()[-2:])
+    window.actions['Close tab'].trigger()
+    assert window.tabs.count() == 0
+    window.close()
+
+
+def test_local_terminal_opens_in_tab_and_empty_pane(qtbot, tmp_path, monkeypatch):
+    from PyQt6.QtCore import QPoint, QPointF, Qt
+    from PyQt6.QtGui import QDropEvent
+    from remote_manager.ui.dialogs import LocalTerminalProfileDialog
+
+    monkeypatch.setenv('SHELL', '/bin/sh')
+    monkeypatch.setenv('HOME', str(tmp_path))
+    path = tmp_path / 'local.db'
+    window = MainWindow(Vault(path, 'master'), path)
+    qtbot.addWidget(window)
+    window.show()
+
+    tree = window.local_tree
+    left = Qt.MouseButton.LeftButton
+    assert tree.headerItem().text(0) == 'Local'
+    assert window.tree.headerItem().text(0) == 'Remote'
+    assert tree.topLevelItem(0).text(0) == 'Local terminal'
+    toggle = window.actions['Local profiles']
+    assert toggle in window.menus['View'].actions()
+    assert not toggle.isChecked() and tree.isHidden()
+    toggle.trigger()
+    assert tree.isVisible()
+    toggle.trigger()
+    assert tree.isHidden() and window.tree.isVisible()
+    toggle.trigger()
+    tree.setFocus()
+    qtbot.keyClick(tree, Qt.Key.Key_Return)
+    terminal = window.tabs.currentWidget()
+    try:
+        assert terminal.session_status.protocol == 'LOCAL'
+        assert not terminal.file_transfer_available()
+        terminal.send(b'test -t 0 && test -t 2 && test "$PWD" = "$HOME" && echo "PTY_"OK >&2\r')
+        qtbot.waitUntil(lambda: any('PTY_OK' in row for row in terminal.screen.display))
+    finally:
+        window.close_tab(0, confirm=False)
+    assert terminal.process.poll() is not None
+
+    directory = tmp_path / 'working directory'
+    directory.mkdir()
+    commands = 'marker=READY\ntest "${PWD##*/}" = "working directory" && echo "STARTUP_$marker"'
+
+    def enter_profile(dialog):
+        dialog.name.setText('Build shell')
+        dialog.directory.setText(str(directory))
+        dialog.commands.setPlainText(commands)
+        dialog.accept()
+        return dialog.result()
+
+    monkeypatch.setattr(LocalTerminalProfileDialog, 'exec', enter_profile)
+
+    def add_from_menu(menu, position):
+        assert [action.text() for action in menu.actions()] == ['Add local profile']
+        menu.actions()[0].trigger()
+
+    monkeypatch.setattr(QMenu, 'exec', add_from_menu)
+    empty_position = QPoint(4, tree.viewport().height() - 2)
+    assert tree.itemAt(empty_position) is None
+    tree.customContextMenuRequested.emit(empty_position)
+    assert tree.topLevelItemCount() == 2
+    profile = window.vault.local_terminal_profiles()[0]
+    assert profile['commands'] == commands
+    saved_vault = Vault(path, 'master')
+    try:
+        assert saved_vault.local_terminal_profiles() == [profile]
+    finally:
+        saved_vault.close()
+
+    window.actions['Grid 2 × 2'].trigger()
+    workspace = window.tabs.currentWidget()
+    try:
+        empty = workspace.empty_panes[3]
+
+        class LauncherDrop(QDropEvent):
+            def source(self):
+                return tree
+
+        tree.setCurrentItem(tree.topLevelItem(1))
+        mime = tree.mimeData(tree.selectedItems())
+        event = LauncherDrop(QPointF(5, 5), Qt.DropAction.CopyAction, mime, left, Qt.KeyboardModifier.NoModifier)
+        empty.dropEvent(event)
+        assert event.isAccepted()
+        terminal = workspace.active
+        assert window.tabs.count() == 1
+        assert workspace.positions == {terminal: 3}
+        assert terminal._workspace_title == 'Build shell'
+        qtbot.waitUntil(lambda: any('STARTUP_READY' in row for row in terminal.screen.display))
+        terminal.send(b'exit 7\r')
+        qtbot.waitUntil(lambda: terminal.session_status.exit_code == 7)
+    finally:
+        window.close_tab(0, confirm=False)
+
+    def rename_profile(dialog):
+        assert dialog.commands.toPlainText() == commands
+        dialog.name.setText('Renamed shell')
+        dialog.accept()
+        return dialog.result()
+
+    monkeypatch.setattr(LocalTerminalProfileDialog, 'exec', rename_profile)
+    window.edit_local_profile(profile['id'])
+    assert tree.topLevelItem(1).text(0) == 'Renamed shell'
+    monkeypatch.setattr(QMessageBox, 'question', lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    window.delete_local_profile(profile['id'])
+    assert tree.topLevelItemCount() == 1
+    assert window.vault.local_terminal_profiles() == []
+    window.close()
+
+
 def test_drag_live_session_between_workspaces(qtbot, tmp_path, ssh_server, monkeypatch):
     from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
     from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QMouseEvent
@@ -199,14 +336,16 @@ def test_empty_panes_toolbar_menu_and_tree_drop(qtbot, tmp_path, ssh_server):
     qtbot.addWidget(window)
     window.show()
     try:
-        assert not window.actions['Split vertically'].isEnabled()
+        window.actions['Split vertically'].trigger()
+        group = window.tabs.currentWidget()
+        assert len(group.empty_panes) == 2
         profile = vault.profiles()[0]
-        first = window.open_profile(profile)
+        window.add_workspace_connection(group, group.mode, profile)
+        first = group.active
         first.send(b"printf '\\nFIRST_PANE\\n'\r")
         qtbot.waitUntil(lambda: any(line.strip() == 'FIRST_PANE' for line in first.screen.display), timeout=15000)
         process = first.process
-        window.actions['Split vertically'].trigger()
-        group = window.tabs.currentWidget()
+        assert window.tabs.currentWidget() is group
         assert group.root.orientation() == Qt.Orientation.Horizontal
         assert group.root.count() == 2 and len(group.empty_panes) == 1
         menu = QMenu(window)
@@ -250,6 +389,10 @@ def test_empty_panes_toolbar_menu_and_tree_drop(qtbot, tmp_path, ssh_server):
         window.detach_terminal(second)
         assert any(pane.slot == 3 for pane in group.empty_panes)
         assert group.positions[third] == 1
+        window.close_pane(first, confirm=False)
+        window.close_pane(third, confirm=False)
+        assert window.tabs.indexOf(group) >= 0
+        assert group.mode == 'grid' and len(group.empty_panes) == 4
     finally:
         while window.tabs.count():
             window.close_tab(0, confirm=False)

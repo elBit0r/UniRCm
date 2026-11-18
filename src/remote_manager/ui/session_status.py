@@ -151,7 +151,7 @@ class SessionStatusLabel(QWidget):
             if session is not None:
                 session.activity.connect(self.show_activity)
         self._session = session
-        self.activity_section.setVisible(session is not None and session.protocol in ('SSH', 'TELNET'))
+        self.activity_section.setVisible(session is not None and session.protocol in ('SSH', 'TELNET', 'LOCAL'))
         states = {'embedded': self.tr('Desktop in workspace'), 'external': self.tr('External client running'), 'connecting': self.tr('Connecting'), 'authenticating': self.tr('Authenticating'),
                   'connected': self.tr('Connected'), 'disconnected': self.tr('Disconnected'),
                   'error': self.tr('Error')}
@@ -168,17 +168,25 @@ class SessionStatusLabel(QWidget):
         if session is not None:
             self.protocol.value.setText(session.protocol)
             self.protocol.setToolTip(self.tr('Telnet — unencrypted TCP connection; authentication is handled by the remote device.') if session.protocol == 'TELNET' else self.tr('Connection protocol'))
-            user = f'{session.username}@' if session.username else ''
-            host = f'[{session.host}]' if ':' in session.host and not session.host.startswith('[') else session.host
-            destination = f'{user}{host}:{session.port}'
-            self.destination.value.setText(destination)
-            self.destination.setToolTip(destination)
-            parts.extend([session.protocol, destination])
+            parts.append(self.tr('Local terminal') if session.protocol == 'LOCAL' else session.protocol)
+            if session.protocol == 'LOCAL':
+                self.destination.hide()
+            else:
+                user = f'{session.username}@' if session.username else ''
+                host = f'[{session.host}]' if ':' in session.host and not session.host.startswith('[') else session.host
+                destination = f'{user}{host}:{session.port}'
+                self.destination.value.setText(destination)
+                self.destination.setToolTip(destination)
+                parts.append(destination)
             duration = session.duration()
             self.elapsed.setVisible(duration is not None)
             if duration is not None:
                 self.elapsed.value.setText(duration)
-                self.elapsed.setToolTip(self.tr('Duration since Telnet connection was established; login status is unknown.') if session.protocol == 'TELNET' else self.tr('Connection duration since successful authentication'))
+                duration_tooltip = {
+                    'LOCAL': 'Time since the local shell started',
+                    'TELNET': 'Duration since Telnet connection was established; login status is unknown.',
+                }
+                self.elapsed.setToolTip(self.tr(duration_tooltip.get(session.protocol, 'Connection duration since successful authentication')))
                 parts.append(duration)
             terminal = session.terminal_size
             size = terminal or session.desktop_size

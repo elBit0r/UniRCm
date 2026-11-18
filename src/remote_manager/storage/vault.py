@@ -129,6 +129,31 @@ class Vault:
             self.connection.close()
             raise
 
+    def local_terminal_profiles(self):
+        row = self.connection.execute("SELECT value FROM settings WHERE key='local_terminal_profiles'").fetchone()
+        return json.loads(row[0]) if row else []
+
+    def save_local_terminal_profile(self, name, directory, commands, profile_id=None):
+        name, directory = name.strip(), directory.strip()
+        if not name or any(char in name + directory for char in '\r\n\x00') or '\x00' in commands:
+            raise ValueError('Enter a profile name and valid directory and commands.')
+        with self.connection:
+            profiles = self.local_terminal_profiles()
+            if any(p['id'] != profile_id and p['name'].casefold() == name.casefold() for p in profiles):
+                raise ValueError('A local terminal profile already uses this name.')
+            profile = dict(id=profile_id or uuid.uuid4().hex, name=name, directory=directory, commands=commands)
+            self._write_local_terminal_profiles([p for p in profiles if p['id'] != profile_id] + [profile])
+        return profile['id']
+
+    def delete_local_terminal_profile(self, profile_id):
+        with self.connection:
+            self._write_local_terminal_profiles([p for p in self.local_terminal_profiles() if p['id'] != profile_id])
+
+    def _write_local_terminal_profiles(self, profiles):
+        self.connection.execute(
+            "INSERT INTO settings(key,value) VALUES('local_terminal_profiles',?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(profiles),))
+
     def terminal_profiles(self):
         row = self.connection.execute("SELECT value FROM settings WHERE key='terminal_profiles'").fetchone()
         if row:

@@ -25,6 +25,7 @@ def action_icon(widget, action):
         'Cut': ('edit-cut', 'SP_DialogDiscardButton'),
         'New': ('document-new', 'SP_FileIcon'),
         'New connection': ('document-new', 'SP_FileIcon'),
+        'New local terminal': ('utilities-terminal', 'SP_ComputerIcon'),
         'New group': ('folder-new', 'SP_FileDialogNewFolder'),
         'Edit': ('document-edit', 'SP_FileDialogDetailedView'),
         'Group defaults': ('preferences-system', 'SP_FileDialogDetailedView'),

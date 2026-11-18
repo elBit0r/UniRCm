@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QDialog, QLineEdit
 from remote_manager import APP_SHORT_NAME, APP_NAME, __version__
 from remote_manager.terminal.public_key import public_key_from_private
 from remote_manager.terminal.ssh import Terminal
-from .dialogs import TerminalAppearanceDialog, GroupDefaultsDialog, ProfileDialog, VaultUnlockPanel
+from .dialogs import TerminalAppearanceDialog, GroupDefaultsDialog, LocalTerminalProfileDialog, ProfileDialog, VaultUnlockPanel
 from .settings import SettingsDialog
 from .visuals import brand_header, style_surface, contrast_workspace
 from .language import set_language
@@ -112,7 +112,7 @@ class MainWindow(QMainWindow):
         self.tree.setStyleSheet('QTreeWidget::item { padding-top: 5px; padding-bottom: 5px; }')
         self.tree.setUniformRowHeights(True)
         self.tree.setFrameShape(QTreeWidget.Shape.NoFrame)
-        self.tree.setHeaderLabels([self.tr('Connections')])
+        self.tree.setHeaderLabels([self.tr('Remote')])
         self.tree.setToolTip(self.tr('Drag above or below an item to reorder; drop onto a group to move inside it.'))
         self.tree.itemDoubleClicked.connect(lambda *_: self.connect_profile())
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -145,6 +145,18 @@ class MainWindow(QMainWindow):
         self._filter_expansion = None
         self._filter_selection = None
         self._filter_scroll = 0
+        self.local_tree = QTreeWidget()
+        self.local_tree.setRootIsDecorated(False)
+        self.local_tree.setUniformRowHeights(True)
+        self.local_tree.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self.local_tree.setDefaultDropAction(Qt.DropAction.CopyAction)
+        self.local_tree.setMaximumHeight(150)
+        self.local_tree.hide()
+        self.local_tree.itemActivated.connect(
+            lambda item, column: self.open_local_terminal(profile_id=item.data(0, Qt.ItemDataRole.UserRole)))
+        self.local_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.local_tree.customContextMenuRequested.connect(self.local_tree_menu)
+        sidebar_layout.addWidget(self.local_tree)
         sidebar_layout.addWidget(self.search)
         sidebar_layout.addWidget(self.tree)
         # Keep the splitter's first pane present when its contents are hidden,
@@ -186,6 +198,7 @@ class MainWindow(QMainWindow):
                                 ('Delete', self.delete_profile), ('Connect', self.connect_profile),
                                 ('Open database', self.switch_database), ('Settings', self.database_settings), ('Credentials', self.manage_credentials), ('Lock', self.lock_vault),
                                 ('New database', self.new_database), ('Exit', self.close),
+                                ('New local terminal', self.open_local_terminal),
                                 ('Disconnect', self.disconnect_current_session), ('Reconnect', self.reconnect_current_session),
                                 ('Close tab', self.close_current_tab), ('Find connection', self.focus_search),
                                 ('Help', self.show_help), ('About', self.show_about),
@@ -196,6 +209,7 @@ class MainWindow(QMainWindow):
             action.setText(self.tr(title))
             action.triggered.connect(lambda checked=False, method=callback.__name__: getattr(self, method)())
             self.actions[title] = action
+        self.actions['New local terminal'].setToolTip(self.tr('Open an interactive shell on this computer.'))
         for group in [('New connection', 'Open database'), ('Edit', 'Connect', 'Disconnect'), ('Lock',)]:
             if toolbar.actions():
                 toolbar.addSeparator()
@@ -255,7 +269,7 @@ class MainWindow(QMainWindow):
         contents = {
             'File': [('New connection', 'New group', 'New database'), ('Open database',), ('Lock',), ('Exit',)],
             'Edit': [('Edit', 'Duplicate', 'Delete'), ('Credentials', 'Settings')],
-            'Session': [('Connect',), ('Disconnect', 'Reconnect', 'Close tab')],
+            'Session': [('Connect', 'New local terminal'), ('Disconnect', 'Reconnect', 'Close tab')],
             'View': [('Find connection',), ('Expand all groups', 'Collapse all groups')],
             'Help': [('Help', 'About')],
         }
@@ -286,6 +300,9 @@ class MainWindow(QMainWindow):
             page = self.tabs.currentWidget()
             if page is not None:
                 self.populate_workspace_menu(workspace_menu, page)
+            else:
+                for title in ('Split vertically', 'Split horizontally', 'Grid 2 × 2'):
+                    workspace_menu.addAction(self.actions[title])
         workspace_menu.aboutToShow.connect(rebuild_workspace_menu)
         toggle = self.toolbar.toggleViewAction()
         toggle.setText(self.tr('Toolbar'))
@@ -303,6 +320,13 @@ class MainWindow(QMainWindow):
         tree_toggle.toggled.connect(self.set_tree_visible)
         self.menus['View'].addAction(tree_toggle)
         self.actions['Connection tree'] = tree_toggle
+        local_toggle = QAction(action_icon(self, 'New local terminal'), self.tr('Local profiles'), self)
+        local_toggle.setIconVisibleInMenu(True)
+        local_toggle.setCheckable(True)
+        local_toggle.setToolTip(self.tr('Show or hide the local terminal profiles in the connections panel.'))
+        local_toggle.toggled.connect(self.local_tree.setVisible)
+        self.menus['View'].addAction(local_toggle)
+        self.actions['Local profiles'] = local_toggle
         status = QAction(action_icon(self, 'Status bar'), self.tr('Status bar'), self)
         status.setIconVisibleInMenu(True)
         status.setCheckable(True)
@@ -471,12 +495,11 @@ class MainWindow(QMainWindow):
     def update_session_actions(self):
         if self.vault is None or not hasattr(self, 'actions') or 'Close tab' not in self.actions:
             return
-        terminal = active_session(self.tabs.currentWidget())
+        page = self.tabs.currentWidget()
+        terminal = active_session(page)
         self.actions['Disconnect'].setEnabled(terminal is not None and terminal.is_running())
         self.actions['Reconnect'].setEnabled(self.can_reconnect(terminal))
-        self.actions['Close tab'].setEnabled(terminal is not None)
-        for title in ('Split vertically', 'Split horizontally', 'Grid 2 × 2'):
-            self.actions[title].setEnabled(terminal is not None)
+        self.actions['Close tab'].setEnabled(page is not None)
 
     def disconnect_current_session(self):
         terminal = active_session(self.tabs.currentWidget())
@@ -723,6 +746,8 @@ class MainWindow(QMainWindow):
     def refresh(self, selected=None, selected_folder=None):
         if self.vault is None:
             return
+        self.refresh_local_profiles()
+        self.tree.setHeaderLabels([self.tr('Remote')])
         restoring = self._restoring_tree
         self._restoring_tree = True
         previous = self.item_key(self.tree.currentItem())
@@ -1023,6 +1048,94 @@ class MainWindow(QMainWindow):
         except Exception as error:
             QMessageBox.warning(self, self.tr('Connection failed'), str(error))
             return
+        return self.add_session_tab(terminal, profile)
+
+    def refresh_local_profiles(self, selected=None):
+        current = self.local_tree.currentItem()
+        if selected is None and current is not None:
+            selected = current.data(0, Qt.ItemDataRole.UserRole)
+        self.local_tree.clear()
+        self.local_tree.setHeaderLabels([self.tr('Local')])
+        profiles = sorted(self.vault.local_terminal_profiles(), key=lambda profile: profile['name'].casefold())
+        for profile in [dict(id=None, name=self.tr('Local terminal')), *profiles]:
+            item = QTreeWidgetItem(self.local_tree, [profile['name']])
+            item.setData(0, Qt.ItemDataRole.UserRole, profile['id'])
+            item.setIcon(0, action_icon(self, 'New local terminal'))
+            item.setToolTip(0, self.tr('Open this local terminal or drag it onto an empty workspace pane.'))
+            if profile['id'] == selected:
+                self.local_tree.setCurrentItem(item)
+
+    def local_tree_menu(self, position):
+        item = self.local_tree.itemAt(position)
+        menu = QMenu(self.local_tree)
+        add = menu.addAction(action_icon(self, 'New connection'), self.tr('Add local profile'),
+                             lambda: self.edit_local_profile())
+        add.setToolTip(self.tr('Save a local terminal with a working directory and startup commands.'))
+        menu.setToolTipsVisible(True)
+        if item is not None:
+            profile_id = item.data(0, Qt.ItemDataRole.UserRole)
+            menu.addSeparator()
+            menu.addAction(action_icon(self, 'New local terminal'), self.tr('Open local terminal'),
+                           lambda: self.open_local_terminal(profile_id=profile_id))
+            if profile_id is not None:
+                menu.addAction(action_icon(self, 'Edit'), self.tr('Edit local profile'),
+                               lambda: self.edit_local_profile(profile_id))
+                menu.addAction(action_icon(self, 'Delete'), self.tr('Delete local profile'),
+                               lambda: self.delete_local_profile(profile_id))
+        menu.exec(self.local_tree.viewport().mapToGlobal(position))
+
+    def edit_local_profile(self, profile_id=None):
+        vault = self.vault
+        profile = next((p for p in vault.local_terminal_profiles() if p['id'] == profile_id), {})
+        if profile_id is not None and not profile:
+            return
+        saved_id = None
+
+        def save(name, directory, commands):
+            nonlocal saved_id
+            saved_id = vault.save_local_terminal_profile(name, directory, commands, profile_id)
+
+        dialog = LocalTerminalProfileDialog(profile, save, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and self.vault is vault:
+            self.refresh_local_profiles(saved_id)
+        if not isdeleted(dialog):
+            dialog.deleteLater()
+
+    def delete_local_profile(self, profile_id):
+        vault = self.vault
+        if QMessageBox.question(self, self.tr('Delete local profile'), self.tr('Delete this local terminal profile?'),
+                                defaultButton=QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes and self.vault is vault:
+            vault.delete_local_terminal_profile(profile_id)
+            self.refresh_local_profiles()
+
+    def open_local_terminal(self, *, profile_id=None, workspace=None, slot=None):
+        if self.vault is None:
+            return
+        if workspace is None:
+            workspace = self.tabs.currentWidget()
+        if isinstance(workspace, SessionWorkspace):
+            vacant = [pane.slot for pane in workspace.empty_panes]
+            if slot is not None and slot not in vacant:
+                return
+            if slot is None and vacant:
+                slot = vacant[0]
+        profile = dict(name=self.tr('Local terminal'), protocol='local')
+        if profile_id is not None:
+            saved = next((p for p in self.vault.local_terminal_profiles() if p['id'] == profile_id), None)
+            if saved is None:
+                return
+            profile.update(name=saved['name'], directory=saved['directory'], commands=saved['commands'])
+        try:
+            terminal = Terminal(profile, self)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, self.tr('Unable to start local terminal'), str(error))
+            return
+        self.add_session_tab(terminal, profile)
+        if slot is not None:
+            self.move_to_workspace(terminal, workspace, workspace.mode, slot)
+        return terminal
+
+    def add_session_tab(self, terminal, profile):
         terminal.session_status.changed.connect(self.update_session_status)
         if hasattr(terminal, 'public_key_install_finished'):
             terminal.public_key_install_finished.connect(self.public_key_install_result)
@@ -1035,9 +1148,12 @@ class MainWindow(QMainWindow):
         if color.isValid():
             self.tabs.set_base_color(index, color)
         self.tabs.watch_terminal(terminal)
-        protocol = profile.get('protocol', 'ssh').upper()
-        warning = self.tr(' — Unencrypted connection') if protocol == 'TELNET' else ''
-        terminal._workspace_tooltip = f"{protocol} — {profile['username']}@{profile['host']}:{profile['port']}{warning}"
+        protocol = terminal.session_status.protocol
+        if protocol == 'LOCAL':
+            terminal._workspace_tooltip = profile['name']
+        else:
+            warning = self.tr(' — Unencrypted connection') if protocol == 'TELNET' else ''
+            terminal._workspace_tooltip = f"{protocol} — {profile['username']}@{profile['host']}:{profile['port']}{warning}"
         if protocol == 'RDP':
             terminal._workspace_tooltip += self.tr(' — Embedded desktop') if terminal.embedded else self.tr(' — External window')
         self.tabs.setTabToolTip(index, terminal._workspace_tooltip)
@@ -1102,7 +1218,8 @@ class MainWindow(QMainWindow):
             self.vault.save(profile)
             self.refresh()
 
-        dialog = TerminalAppearanceDialog(terminal, save_options, self)
+        callback = None if terminal.session_status.protocol == 'LOCAL' else save_options
+        dialog = TerminalAppearanceDialog(terminal, callback, self)
         dialog.exec()
         terminal.setFocus()
 
@@ -1135,9 +1252,7 @@ class MainWindow(QMainWindow):
             self.tabs.setTabToolTip(index, getattr(terminal, '_workspace_tooltip', ''))
 
     def apply_workspace_layout(self, mode):
-        page = self.tabs.currentWidget()
-        if page is not None:
-            self.ensure_workspace(page).arrange(mode)
+        self.ensure_workspace(self.tabs.currentWidget()).arrange(mode)
 
     def workspace_drop_profile(self, source):
         if source is not self.tree or len(self.tree.selectedItems()) != 1:
@@ -1148,6 +1263,10 @@ class MainWindow(QMainWindow):
         return None
 
     def fill_workspace_drop(self, workspace, source, slot):
+        if source is self.local_tree and len(self.local_tree.selectedItems()) == 1:
+            item = self.local_tree.selectedItems()[0]
+            self.open_local_terminal(profile_id=item.data(0, Qt.ItemDataRole.UserRole), workspace=workspace, slot=slot)
+            return
         profile = self.workspace_drop_profile(source)
         if profile is not None and slot not in workspace.positions.values():
             self.add_workspace_connection(workspace, workspace.mode, profile, slot)
@@ -1166,11 +1285,18 @@ class MainWindow(QMainWindow):
     def ensure_workspace(self, page):
         if isinstance(page, SessionWorkspace):
             return page
-        index = self.tabs.indexOf(page)
-        title, icon = self.tabs.tabText(index), self.tabs.tabIcon(index)
-        self.tabs.take_page(index)
-        workspace = SessionWorkspace()
-        workspace.accepts_drop = lambda source: self.workspace_drop_profile(source) is not None
+        if page is None:
+            index = self.tabs.count()
+            title, icon = self.tr('Workspace'), action_icon(self, 'Grid 2 × 2')
+        else:
+            index = self.tabs.indexOf(page)
+            title, icon = self.tabs.tabText(index), self.tabs.tabIcon(index)
+            self.tabs.take_page(index)
+        workspace = SessionWorkspace(keep_empty=page is None)
+        workspace.accepts_drop = lambda source: (
+            (source is self.local_tree and len(self.local_tree.selectedItems()) == 1)
+            or self.workspace_drop_profile(source) is not None
+        )
         workspace.accepts_session_drop = lambda terminal: self.tabs.can_move_session(terminal, workspace)
         workspace.empty_menu_requested.connect(lambda menu, slot: self.populate_empty_pane_menu(workspace, menu, slot))
         workspace.connection_dropped.connect(lambda source, slot: self.fill_workspace_drop(workspace, source, slot))
@@ -1180,7 +1306,8 @@ class MainWindow(QMainWindow):
         workspace.detach_requested.connect(self.detach_terminal)
         self.tabs.insertTab(index, workspace, icon, title)
         self.tabs.setTabToolTip(index, '')
-        workspace.add_terminal(page)
+        if page is not None:
+            workspace.add_terminal(page)
         self.tabs.setCurrentWidget(workspace)
         return workspace
 
@@ -1193,7 +1320,7 @@ class MainWindow(QMainWindow):
         source = self.tabs.widget(self.tabs.indexOf(terminal))
         if isinstance(source, SessionWorkspace):
             source.take_terminal(terminal)
-            if not source.terminals:
+            if not source.terminals and not source.keep_empty:
                 self.tabs.take_page(self.tabs.indexOf(source))
                 source.deleteLater()
         else:
@@ -1208,7 +1335,7 @@ class MainWindow(QMainWindow):
         if not isinstance(workspace, SessionWorkspace):
             return
         workspace.take_terminal(terminal)
-        if not workspace.terminals:
+        if not workspace.terminals and not workspace.keep_empty:
             self.tabs.take_page(self.tabs.indexOf(workspace))
             workspace.deleteLater()
         index = self.tabs.addTab(terminal, terminal._workspace_icon, terminal._workspace_title)
@@ -1234,7 +1361,7 @@ class MainWindow(QMainWindow):
         self.tabs.unwatch_terminal(terminal)
         page.take_terminal(terminal)
         terminal.deleteLater()
-        if not page.terminals:
+        if not page.terminals and not page.keep_empty:
             self.tabs.take_page(self.tabs.indexOf(page))
             page.deleteLater()
         self.update_session_status()
@@ -1279,8 +1406,8 @@ class MainWindow(QMainWindow):
             existing.addAction(terminal._workspace_icon, terminal._workspace_title,
                                lambda checked=False, t=terminal: self.move_to_workspace(t, page, getattr(page, 'mode', 'side')))
         if isinstance(page, SessionWorkspace):
-            action(menu, 'Detach active pane', lambda: self.detach_terminal(page.active))
-            action(menu, 'Close active pane', lambda: self.close_pane(page.active))
+            action(menu, 'Detach active pane', lambda: self.detach_terminal(page.active)).setEnabled(page.active is not None)
+            action(menu, 'Close active pane', lambda: self.close_pane(page.active)).setEnabled(page.active is not None)
 
     def tab_context_menu(self, position):
         index = self.tabs.tabBar().tabAt(position)
@@ -1370,6 +1497,7 @@ class MainWindow(QMainWindow):
         self._filter_expansion = None
         self._filter_selection = None
         self.tree.clear()
+        self.local_tree.clear()
         self.vault.close()
         self.vault = None
         self._locked_workspace = self.takeCentralWidget()

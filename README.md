@@ -10,6 +10,16 @@ UniRCm (Uni Remote Connection Manager) is a desktop app for system administrator
 
 Telnet sends credentials and session data without encryption. Use SSH when the device supports it.
 
+## Screenshots
+
+**Connection manager** with example SSH and RDP profiles organized in groups.
+
+![UniRCm main window showing the grouped connection tree and session toolbar](docs/screenshots/connection-manager.png)
+
+**RDP profile editor** showing the destination and authentication settings for an embedded desktop.
+
+![UniRCm profile editor showing an example RDP connection with the password field empty](docs/screenshots/rdp-profile.png)
+
 ## Transfer files over SSH
 
 Once you're connected, right-click inside the SSH terminal and choose **Upload file** or **Download file**. You can also drop local files onto the terminal to start an upload. UniRCm uses SFTP over the existing authenticated SSH connection, so you can move files without logging in again or opening a separate client. The server must support SFTP.

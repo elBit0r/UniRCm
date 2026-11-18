@@ -47,7 +47,15 @@ Updated 2026-11-17. [PROJECT.md](PROJECT.md) defines product scope.
   credentials, sorting, search, custom icons and persistent tree state.
   Individual connections can be duplicated. Workspaces support up to four
   live panes, session movement by menu or drag and drop, maximize/restore
-  and detach.
+  and detach. Layout actions can create an empty workspace that stays open
+  after its last pane closes. Verified on Linux with loopback SSH.
+- **Local terminal.** Session → New local terminal opens an interactive shell
+  in a tab or the first vacant pane. The Local tree contains the default
+  terminal and encrypted profiles with a working directory and startup
+  commands. The tree starts hidden and can be shown with View → Local profiles.
+  Add profiles from its context menu and drag them to a specific pane.
+  Linux checks verified persistence, multiline startup
+  in a real shell, exit status and cleanup.
 - **RDP.** The optional native FreeRDP 3 bridge embeds the desktop in Qt.
   It supports common credentials, certificate checks, keyboard and mouse,
   scaling, fullscreen and opt-in text clipboard. Local scaling is used when

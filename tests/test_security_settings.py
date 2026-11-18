@@ -217,7 +217,8 @@ def test_italian_interface_preserves_profile_names(qtbot, tmp_path):
         window.show()
         assert window.actions['New connection'].text() == 'Nuova connessione'
         assert window.actions['Settings'].text() == 'Impostazioni'
-        assert window.tree.headerItem().text(0) == 'Connessioni'
+        assert window.local_tree.headerItem().text(0) == 'Locale'
+        assert window.tree.headerItem().text(0) == 'Remoto'
         assert window.tree.topLevelItem(0).text(0) == 'Settings'  # User text.
         profile = ProfileDialog(parent=window)
         assert profile.tabs.tabText(0) == 'Generale'

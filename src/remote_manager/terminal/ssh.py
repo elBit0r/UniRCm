@@ -1,4 +1,4 @@
-"""Embedded VT terminal: OpenSSH + POSIX PTY + pyte, rendered by Qt."""
+"""Embedded VT terminal for OpenSSH, local shells and Telnet, rendered by Qt."""
 import errno
 import fcntl
 import os
@@ -57,7 +57,9 @@ class Terminal(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
         self.setFont(default_font())
-        self.session_status = SessionStatus(profile.get('protocol', 'ssh').upper(), profile['host'], profile['port'], profile.get('username', ''), self)
+        protocol = profile.get('protocol', 'ssh')
+        local = protocol == 'local'
+        self.session_status = SessionStatus(protocol, profile.get('host', ''), profile.get('port'), profile.get('username', ''), self)
         self._diagnostic_buffer = bytearray()
         self._diagnostic_shown = 0
         self.profile_id = profile.get('id')
@@ -102,10 +104,11 @@ class Terminal(QWidget):
         self.control_path = None
         self.key_fd = None
         self.key_install_process = None
-        self.sftp_host = profile['host'].strip()
-        self.setAcceptDrops(profile.get('protocol', 'ssh') == 'ssh')
+        self.sftp_host = profile.get('host', '').strip()
+        self.setAcceptDrops(protocol == 'ssh')
         self.transport = None
-        if profile.get('protocol') == 'telnet':
+        self.diagnostics = None
+        if protocol == 'telnet':
             from .telnet import TelnetTransport
             self.askpass = None
             self.transport = TelnetTransport(profile)
@@ -120,25 +123,22 @@ class Terminal(QWidget):
         self.askpass = None
         master = slave = None
         try:
-            if private_key is not None:
-                self.key_fd, path = open_memory_key(private_key)
-                profile = dict(profile, identity_file=path)
-            if profile.get('password') or profile.get('key_passphrase'):
-                self.askpass = AskpassBridge(profile.get('password', ''), self,
-                                             profile.get('key_passphrase', ''), profile.get('identity_file', ''))
-            self.control_directory = tempfile.TemporaryDirectory(prefix='unircm-ssh-')
-            self.control_path = os.path.join(self.control_directory.name, 'socket')
-            args = ssh_command(profile)
-            args[1:1] = ['-o', 'ControlMaster=yes', '-o', 'ControlPersist=no',
-                         '-o', f'ControlPath={self.control_path}']
             master, slave = os.openpty()
             env = os.environ.copy()
             env['TERM'] = 'xterm-256color'
-            env['LC_ALL'] = 'C'
-            if self.askpass is not None:
-                env.update(self.askpass.environment())
+            if local:
+                shell = env.get('SHELL', '')
+                if not os.path.isabs(shell) or not os.path.isfile(shell) or not os.access(shell, os.X_OK):
+                    shell = '/bin/sh'
+                args = [shell, '-i']
+            else:
+                args = self.ssh_arguments(profile, private_key)
+                env['LC_ALL'] = 'C'
+                if self.askpass is not None:
+                    env.update(self.askpass.environment())
             self.process = subprocess.Popen(
-                args, stdin=slave, stdout=slave, stderr=subprocess.PIPE,
+                args, stdin=slave, stdout=slave, stderr=slave if local else subprocess.PIPE,
+                cwd=os.path.expanduser(profile.get('directory') or '~') if local else None,
                 start_new_session=True,
                 preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0), env=env)
         except Exception:
@@ -160,11 +160,31 @@ class Terminal(QWidget):
         self.writer = QSocketNotifier(master, QSocketNotifier.Type.Write, self)
         self.writer.setEnabled(False)
         self.writer.activated.connect(self.flush_input)
-        os.set_blocking(self.process.stderr.fileno(), False)
-        self.diagnostics = QSocketNotifier(self.process.stderr.fileno(), QSocketNotifier.Type.Read, self)
-        self.diagnostics.activated.connect(self.read_diagnostics)
+        if self.process.stderr is not None:
+            os.set_blocking(self.process.stderr.fileno(), False)
+            self.diagnostics = QSocketNotifier(self.process.stderr.fileno(), QSocketNotifier.Type.Read, self)
+            self.diagnostics.activated.connect(self.read_diagnostics)
+        if local:
+            self.session_status.set_state('connected')
         self.poll.start(100)
         self.resize_terminal()
+        if local and profile.get('commands'):
+            commands = profile['commands'].replace('\r\n', '\n').replace('\r', '\n')
+            self.send((commands.rstrip('\n') + '\n').encode())
+
+    def ssh_arguments(self, profile, private_key):
+        if private_key is not None:
+            self.key_fd, path = open_memory_key(private_key)
+            profile = dict(profile, identity_file=path)
+        if profile.get('password') or profile.get('key_passphrase'):
+            self.askpass = AskpassBridge(profile.get('password', ''), self,
+                                         profile.get('key_passphrase', ''), profile.get('identity_file', ''))
+        self.control_directory = tempfile.TemporaryDirectory(prefix='unircm-ssh-')
+        self.control_path = os.path.join(self.control_directory.name, 'socket')
+        args = ssh_command(profile)
+        args[1:1] = ['-o', 'ControlMaster=yes', '-o', 'ControlPersist=no',
+                     '-o', f'ControlPath={self.control_path}']
+        return args
 
     def is_running(self):
         return self.session_status.ended_at is None if self.transport is not None else self.process.poll() is None
@@ -187,7 +207,7 @@ class Terminal(QWidget):
             self.exited.emit(code)
 
     def read_diagnostics(self, *_):
-        if self.process.stderr.closed:
+        if self.process.stderr is None or self.process.stderr.closed:
             return
         try:
             data = os.read(self.process.stderr.fileno(), 65536)
@@ -305,8 +325,9 @@ class Terminal(QWidget):
             self.key_install_process.kill()
         self.read_resume.stop()
         self.output_frame.stop()
-        self.diagnostics.setEnabled(False)
-        self.process.stderr.close()
+        if self.diagnostics is not None:
+            self.diagnostics.setEnabled(False)
+            self.process.stderr.close()
         self._diagnostic_buffer.clear()
         if self.askpass is not None:
             self.askpass.close()
@@ -592,7 +613,7 @@ class Terminal(QWidget):
         menu.addAction(action_icon(self, 'Copy'), self.tr('Copy screen'), lambda: QApplication.clipboard().setText('\n'.join(self.screen.display)))
         menu.addAction(action_icon(self, 'Paste'), self.tr('Paste'), self.paste)
         menu.addSeparator()
-        if self.transport is None:
+        if self.session_status.protocol == 'SSH':
             for title, upload in [('Upload file', True), ('Download file', False)]:
                 action = menu.addAction(action_icon(self, title), self.tr(title),
                                         lambda checked=False, upload=upload: self.open_file_transfer(upload))

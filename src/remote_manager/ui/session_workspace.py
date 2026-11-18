@@ -125,8 +125,9 @@ class SessionWorkspace(QWidget):
     close_requested = pyqtSignal(object)
     detach_requested = pyqtSignal(object)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, keep_empty=False):
         super().__init__(parent)
+        self.keep_empty = keep_empty
         self.terminals = []
         self.panels = {}
         self.positions = {}
