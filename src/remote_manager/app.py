@@ -15,6 +15,7 @@ def main() -> int:
 
     os.umask(0o077)
     app = QApplication(sys.argv)
+    app.setDesktopFileName('unircm')
     app.setWindowIcon(QIcon(str(Path(__file__).parent / 'ui' / 'assets' / 'unircm.png')))
     app.setApplicationName(APP_NAME)
     app.setOrganizationName('UnixRemoteManager')

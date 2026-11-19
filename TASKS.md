@@ -81,6 +81,21 @@ Updated 2026-11-17. [PROJECT.md](PROJECT.md) defines product scope.
 
 ## Recorded Linux verification
 
+- Built UniRCm 0.1.1 amd64 packages on Ubuntu 26.04 and in the isolated
+  Debian 13 environment. The Ubuntu startup dialog used the `unircm` desktop
+  identity and its window icon offscreen. Package tests and Ubuntu APT upgrade
+  simulation passed. GNOME dock grouping still needs a desktop check.
+- Revision 2 of both amd64 packages requires `python3-pyqt6.qtsvg` to fix
+  the connection icon crash. APT simulation selected the dependency on both
+  distributions, and the Ubuntu package rendered the SVG icons offscreen.
+- Built both amd64 packages with the default maintainer, using Ubuntu 26.04
+  locally and Debian 13 in an isolated PRoot environment. APT simulation and
+  launcher checks passed for both. The single-command Docker/Podman path
+  still needs an end-to-end run with a container engine.
+- On Ubuntu 26.04.1 amd64, built `unircm_0.1.0-1+ubuntu26.04_amd64.deb`
+  with Python 3.14 and `--target ubuntu26.04`. The builder rejected
+  `--target debian13` on Ubuntu. APT simulation resolved all dependencies. The extracted
+  package included both launchers and loaded SQLCipher 4.12.0.
 - On Ubuntu 26.04.1, the existing FreeRDP 3 bridge loaded with ABI 3.
   Of 28 targeted RDP checks, 27 passed, including loopback TLS rejection and
   connection cleanup. The native channel harness was skipped because the

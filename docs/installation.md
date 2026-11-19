@@ -15,14 +15,33 @@ For automated GUI smoke tests in a headless Linux CI environment, set `QT_QPA_PL
 
 ## Debian package build
 
-Build on the intended Debian release and architecture with its system Python:
+With Docker or Podman available, run from the repository root to build both packages:
 
 ```sh
-sudo apt install python3-pip python3-setuptools python3-wheel python3-pyqt6 dpkg-dev binutils
-/usr/bin/python3 scripts/build_deb.py --maintainer 'Your Name <you@example.org>'
+python3 scripts/build_deb.py
 ```
 
-The build itself does not require root. Output is `dist/unircm_VERSION_ARCH.deb`.
+The script uses separate Debian 13 and Ubuntu 26.04 LTS containers, installs build
+dependencies in them, and saves both packages in `dist/`. It needs network access
+for the container images and dependencies. The maintainer is set by default.
+
+To build a single package natively, use the corresponding distribution and its
+system Python. Install the build prerequisites on that system:
+
+```sh
+sudo apt install python3-pip python3-setuptools python3-wheel dpkg-dev binutils
+```
+
+| Build environment | Target flag | Example amd64 output |
+| --- | --- | --- |
+| Debian 13 with Python 3.13 | `--target debian13` | `dist/unircm_0.1.1-1+debian13_amd64.deb` |
+| Ubuntu 26.04 LTS with Python 3.14 | `--target ubuntu26.04` | `dist/unircm_0.1.1-1+ubuntu26.04_amd64.deb` |
+
+```sh
+/usr/bin/python3 scripts/build_deb.py --target debian13
+```
+
+The native build itself does not require root.
 Qt and OpenSSH are system dependencies; other Python dependencies are bundled
 privately, including SQLCipher (never a plaintext SQLite fallback). Building
 requires package-index access, or `--wheelhouse /path/to/wheels` for offline use.
@@ -33,7 +52,7 @@ computed with `dpkg-shlibdeps`; the package requires the builder's Python minor 
 SSH is included by default. To include the RDP bridge, also install
 `build-essential pkg-config freerdp3-dev zlib1g-dev` and pass `--with-rdp`.
 No compiler or pip invocation runs during package installation or application startup.
-Use `sudo apt install ./dist/unircm_VERSION_ARCH.deb` on a clean matching Debian
+Use `sudo apt install ./dist/unircm_VERSION_ARCH.deb` on a clean matching Debian or Ubuntu
 system to validate the resulting package. Debian installation/runtime validation
 and the third-party license review remain required before public release.
 

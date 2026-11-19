@@ -2,7 +2,7 @@ from remote_manager import __version__
 
 
 def test_version_declared() -> None:
-    assert __version__ == "0.1.0"
+    assert __version__ == "0.1.1"
 
 
 def test_installed_metadata_and_launchers():
