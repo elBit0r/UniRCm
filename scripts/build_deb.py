@@ -53,8 +53,8 @@ def build_all(engine: str, args: argparse.Namespace) -> None:
                        '--volume', f'{ROOT}:/source:ro', '--volume', f'{staging}:/packages']
             build = ['/usr/bin/python3', '/source/scripts/build_deb.py', '--target', target,
                      '--maintainer', args.maintainer, '--revision', args.revision, '--output', '/packages']
-            if args.with_rdp:
-                build.append('--with-rdp')
+            if not args.with_rdp:
+                build.append('--without-rdp')
             if args.wheelhouse:
                 command += ['--volume', f'{args.wheelhouse.resolve()}:/wheels:ro']
                 build += ['--wheelhouse', '/wheels']
@@ -86,7 +86,9 @@ def main() -> int:
     parser.add_argument('--maintainer', default=MAINTAINER, help='Override the package maintainer (Name <email>)')
     parser.add_argument('--revision', default='1', help='Debian package revision (default: %(default)s)')
     parser.add_argument('--output', type=Path, default=ROOT / 'dist')
-    parser.add_argument('--with-rdp', action='store_true', help='Compile and include the native FreeRDP 3 bridge')
+    rdp = parser.add_mutually_exclusive_group()
+    rdp.add_argument('--with-rdp', action='store_true', default=True, help='Include the native FreeRDP 3 bridge (default)')
+    rdp.add_argument('--without-rdp', action='store_false', dest='with_rdp', help='Build without embedded RDP support')
     parser.add_argument('--wheelhouse', type=Path, help='Offline wheel directory, including application build dependencies')
     args = parser.parse_args()
     if not re.fullmatch(r'[^<>\r\n]+ <[^<>\s]+@[^<>\s]+>', args.maintainer):

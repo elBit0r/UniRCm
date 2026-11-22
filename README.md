@@ -4,7 +4,7 @@ UniRCm (Uni Remote Connection Manager) is a desktop app for system administrator
 
 ## What you can do
 
-- Open SSH and Telnet terminals and RDP desktops in tabs. RDP requires the optional FreeRDP 3 bridge.
+- Open SSH and Telnet terminals and RDP desktops in tabs. The Debian and Ubuntu packages include the FreeRDP 3 bridge.
 - Save connections in folders and reuse credentials across profiles. UniRCm stores settings and saved credentials in a SQLCipher database protected by a master password.
 - Browse remote directories and transfer files from an SSH session that's already open.
 

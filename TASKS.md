@@ -90,6 +90,13 @@ Updated 2026-11-22. [PROJECT.md](PROJECT.md) defines product scope.
 
 ## Recorded Linux verification
 
+- Built UniRCm 0.2.0 amd64 packages for Debian 13 and Ubuntu 26.04 and
+  verified SHA-256 checksums. Debian installation and launcher startup
+  passed in an isolated Debian 13 environment with Qt offscreen. Ubuntu
+  APT upgrade simulation and package, vault, archive, and SFTP checks passed.
+- Rebuilt both 0.2.0 packages with the FreeRDP 3 bridge enabled by default.
+  APT resolved FreeRDP and WinPR on both targets. Installed packages loaded
+  the bridge and initialized an RDP context. Four Ubuntu native and TLS tests passed.
 - Built UniRCm 0.1.1 amd64 packages on Ubuntu 26.04 and in the isolated
   Debian 13 environment. The Ubuntu startup dialog used the `unircm` desktop
   identity and its window icon offscreen. Package tests and Ubuntu APT upgrade

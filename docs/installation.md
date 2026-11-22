@@ -29,13 +29,14 @@ To build a single package natively, use the corresponding distribution and its
 system Python. Install the build prerequisites on that system:
 
 ```sh
-sudo apt install python3-pip python3-setuptools python3-wheel dpkg-dev binutils
+sudo apt install python3-pip python3-setuptools python3-wheel dpkg-dev binutils \
+  build-essential pkg-config freerdp3-dev zlib1g-dev
 ```
 
 | Build environment | Target flag | Example amd64 output |
 | --- | --- | --- |
-| Debian 13 with Python 3.13 | `--target debian13` | `dist/unircm_0.1.1-1+debian13_amd64.deb` |
-| Ubuntu 26.04 LTS with Python 3.14 | `--target ubuntu26.04` | `dist/unircm_0.1.1-1+ubuntu26.04_amd64.deb` |
+| Debian 13 with Python 3.13 | `--target debian13` | `dist/unircm_0.2.0-1+debian13_amd64.deb` |
+| Ubuntu 26.04 LTS with Python 3.14 | `--target ubuntu26.04` | `dist/unircm_0.2.0-1+ubuntu26.04_amd64.deb` |
 
 ```sh
 /usr/bin/python3 scripts/build_deb.py --target debian13
@@ -49,11 +50,12 @@ If SQLCipher has no compatible binary wheel for the build interpreter/architectu
 the build fails rather than substituting SQLite. Native runtime dependencies are
 computed with `dpkg-shlibdeps`; the package requires the builder's Python minor version.
 
-SSH is included by default. To include the RDP bridge, also install
-`build-essential pkg-config freerdp3-dev zlib1g-dev` and pass `--with-rdp`.
-No compiler or pip invocation runs during package installation or application startup.
-Use `sudo apt install ./dist/unircm_VERSION_ARCH.deb` on a clean matching Debian or Ubuntu
-system to validate the resulting package. Debian installation/runtime validation
-and the third-party license review remain required before public release.
+The packages include SSH and the native FreeRDP 3 bridge by default. APT
+installs the FreeRDP runtime libraries when you install the package. Use
+`--without-rdp` only for a build without embedded RDP support. A compiler and
+pip are needed only on the build system.
+Use `sudo apt install ./dist/unircm_VERSION_ARCH.deb` on a matching Debian or
+Ubuntu system. Validate real desktop sessions on the target and complete the
+third-party license review before public release.
 
 **BSD:** test native Python/PyQt6 package installations and the SQLCipher/FreeRDP build independently. Do not infer package availability from Linux pip behavior.
