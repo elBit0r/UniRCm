@@ -20,9 +20,13 @@ Telnet sends credentials and session data without encryption. Use SSH when the d
 
 ![UniRCm profile editor showing an example RDP connection with the password field empty](docs/screenshots/rdp-profile.png)
 
+**SSH file manager** showing remote folders, file sizes, modification times, and permissions.
+
+![UniRCm SSH file manager showing the remote places sidebar, icon toolbar, and detailed file list](docs/screenshots/ssh-file-manager.png)
+
 ## Transfer files over SSH
 
-Once you're connected, right-click inside the SSH terminal and choose **Upload file** or **Download file**. You can also drop local files onto the terminal to start an upload. UniRCm uses SFTP over the existing authenticated SSH connection, so you can move files without logging in again or opening a separate client. The server must support SFTP.
+Once you're connected, right-click inside the SSH terminal and choose **File manager** to browse remote folders and download selected files. Choose **Upload file** or drop local files onto the terminal to start an upload. UniRCm uses SFTP over the existing authenticated SSH connection, so you can move files without logging in again or opening a separate client. The server must support SFTP.
 
 ## Run from source
 

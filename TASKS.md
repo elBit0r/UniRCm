@@ -174,3 +174,5 @@ Updated 2026-11-22. [PROJECT.md](PROJECT.md) defines product scope.
   verified the sidebar and toolbar button styles with Qt offscreen.
 - The SSH file manager toolbar uses QActions shared with the context menu.
   Eleven local OpenSSH/SFTP tests passed.
+- Refreshed the README screenshots and captured the SSH file manager
+  with a real local OpenSSH/SFTP session and sample files.
