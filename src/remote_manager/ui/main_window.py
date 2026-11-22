@@ -497,16 +497,23 @@ class MainWindow(QMainWindow):
             return
         page = self.tabs.currentWidget()
         terminal = active_session(page)
-        self.actions['Disconnect'].setEnabled(terminal is not None and terminal.is_running())
+        self.actions['Disconnect'].setEnabled(
+            terminal is not None and (terminal.is_running() or self.reconnect_pending(terminal))
+        )
         self.actions['Reconnect'].setEnabled(self.can_reconnect(terminal))
         self.actions['Close tab'].setEnabled(page is not None)
 
     def disconnect_current_session(self):
         terminal = active_session(self.tabs.currentWidget())
-        if terminal is None or not terminal.is_running():
+        if terminal is None or not (terminal.is_running() or self.reconnect_pending(terminal)):
             return
-        terminal.stop()
-        self.set_session_title(terminal, f"{getattr(terminal, '_workspace_title', self.tr('Session'))} [{self.tr('disconnected')}]", self.tr('Session disconnected.'))
+        title = getattr(terminal, '_workspace_title', self.tr('Session'))
+        if self.reconnect_pending(terminal):
+            terminal._reconnect_timer.stop()
+            title = title.rsplit(' [', 1)[0]
+        else:
+            terminal.stop()
+        self.set_session_title(terminal, f"{title} [{self.tr('disconnected')}]", self.tr('Session disconnected.'))
         self.update_session_status()
 
     def reconnect_current_session(self):
@@ -1233,7 +1240,28 @@ class MainWindow(QMainWindow):
             else:
                 self.set_session_title(terminal, f'{name} [exit {code}]')
                 self.set_session_title(terminal, terminal._workspace_title, f'{terminal.session_status.protocol} — process exited with code {code}')
+            if (code == 255 and terminal.session_status.protocol == 'SSH'
+                    and terminal.session_status.connected_at is not None and self.vault is not None
+                    and not self._locking):
+                self.schedule_ssh_reconnect(terminal, name)
             self.update_session_status()
+
+    def reconnect_pending(self, terminal):
+        timer = getattr(terminal, '_reconnect_timer', None)
+        return timer is not None and timer.isActive()
+
+    def schedule_ssh_reconnect(self, terminal, name):
+        profiles = self.vault.profiles(terminal.profile_id)
+        delay = profiles[0].get('ssh_reconnect_delay', 0) if profiles else 0
+        if not delay:
+            return
+        timer = QTimer(terminal)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: self.reconnect_terminal(terminal, automatic=True))
+        terminal._reconnect_timer = timer
+        timer.start(delay * 1000)
+        waiting = self.tr('Reconnecting in %1 s').replace('%1', str(delay))
+        self.set_session_title(terminal, f'{name} [{waiting}]', waiting)
 
     def all_terminals(self):
         return [term for i in range(self.tabs.count()) for term in sessions(self.tabs.widget(i))]
@@ -1431,13 +1459,25 @@ class MainWindow(QMainWindow):
         self.populate_workspace_menu(menu, page)
         menu.exec(self.tabs.tabBar().mapToGlobal(position))
 
-    def reconnect_terminal(self, terminal):
-        if terminal.is_running():
+    def reconnect_terminal(self, terminal, *, automatic=False):
+        index = self.tabs.indexOf(terminal)
+        if (index < 0 or self._locking or self.vault is None or terminal.profile_id is None
+                or terminal.is_running()):
             return
-        profile = next((p for p in self.vault.profiles() if p['id'] == terminal.profile_id), None)
-        if profile is None:
+        pending = self.reconnect_pending(terminal)
+        if pending:
+            terminal._reconnect_timer.stop()
+        profiles = self.vault.profiles(terminal.profile_id)
+        if automatic or pending:
+            name = profiles[0]['name'] if profiles else terminal._workspace_title.rsplit(' [', 1)[0]
+            self.set_session_title(terminal, name, self.tr('Session disconnected.'))
+            self.update_session_status()
+        if not profiles:
             return
-        page = self.tabs.widget(self.tabs.indexOf(terminal))
+        profile = profiles[0]
+        if automatic and (profile['protocol'] != 'ssh' or not profile.get('ssh_reconnect_delay')):
+            return
+        page = self.tabs.widget(index)
         position = page.terminals.index(terminal) if isinstance(page, SessionWorkspace) else 0
         slot = page.positions[terminal] if isinstance(page, SessionWorkspace) else None
         replacement = self.open_profile(profile)

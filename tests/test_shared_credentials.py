@@ -70,7 +70,7 @@ def test_credential_selection_and_local_isolation(qtbot, tmp_path):
     dialog.fields['name'].setText('Inherited')
     dialog.fields['host'].setText('localhost')
     selector = dialog.credential_selector
-    selector.source.setCurrentIndex(selector.source.findData('inherit'))
+    selector.source_options['inherit'].setChecked(True)
     assert 'Shared' in selector.note.text()
     dialog.save()
     assert dialog.result() == QDialog.DialogCode.Accepted
@@ -144,6 +144,7 @@ def test_v7_upgrade_preserves_private_credentials(tmp_path):
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN credential_source')
     vault.connection.execute('ALTER TABLE credentials DROP COLUMN key_passphrase')
     vault.connection.execute('ALTER TABLE credentials DROP COLUMN name')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN ssh_reconnect_delay')
     vault.connection.execute('DROP TABLE ssh_private_keys')
     vault.connection.execute('PRAGMA user_version = 7')
     vault.connection.commit()

@@ -35,11 +35,11 @@ def test_source_visibility_and_disabled_secrets(qtbot):
     editor = ProfileDialog()
     qtbot.addWidget(editor)
     selector = editor.credential_selector
-    assert not selector.form.isRowVisible(selector.reference)
-    assert not selector.form.labelForField(selector.reference).isVisible()
+    assert not selector.form.isRowVisible(selector.reference_row)
+    assert not selector.form.labelForField(selector.reference_row).isVisible()
     for source in ('shared', 'inherit', 'none', 'local'):
-        selector.source.setCurrentIndex(selector.source.findData(source))
-        assert selector.form.isRowVisible(selector.reference) == (source == 'shared')
+        selector.source_options[source].setChecked(True)
+        assert selector.form.isRowVisible(selector.reference_row) == (source == 'shared')
         assert editor.general_form.isRowVisible(editor.credentials) == (source in ('local', 'none'))
         assert editor.credentials.password.isEnabled() == (source == 'local')
         assert editor.credentials.key_passphrase.isEnabled() == (source == 'local')
@@ -64,7 +64,7 @@ def test_telnet_login_mode_and_credential_sources_in_general(qtbot, tmp_path):
     assert editor.credential_selector.isEnabled()
     assert not editor.username_row.isEnabled()
     for source in ('shared', 'inherit', 'none', 'local'):
-        editor.credential_selector.source.setCurrentIndex(editor.credential_selector.source.findData(source))
+        editor.credential_selector.source_options[source].setChecked(True)
         assert editor.general_form.isRowVisible(editor.credentials) == (source in ('local', 'none'))
         assert editor.credentials.password.isEnabled() == (source == 'local')
         assert not editor.credentials.key_passphrase.isEnabled()

@@ -134,7 +134,7 @@ def test_telnet_editor_shared_credentials_reconnect_and_close(qtbot, tmp_path, p
     assert not editor.tabs.isTabEnabled(1) and editor.tabs.isTabEnabled(editor.tabs.indexOf(editor.telnet_page))
     editor.port.setValue(peer.port)
     editor.telnet_login.setCurrentIndex(editor.telnet_login.findData('password'))
-    editor.credential_selector.source.setCurrentIndex(editor.credential_selector.source.findData('inherit'))
+    editor.credential_selector.source_options['inherit'].setChecked(True)
     editor.save()
     assert editor.result() == QDialog.DialogCode.Accepted
     saved = vault.profiles()[0]
@@ -232,6 +232,7 @@ def test_schema8_upgrade_keeps_shared_references(tmp_path):
     vault.save(original)
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN telnet_options')
     vault.connection.execute('ALTER TABLE credentials DROP COLUMN key_passphrase')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN ssh_reconnect_delay')
     vault.connection.execute('DROP TABLE ssh_private_keys')
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN rdp_options')
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN rdp_domain')
@@ -244,7 +245,7 @@ def test_schema8_upgrade_keeps_shared_references(tmp_path):
     saved = vault.profiles()[0]
     assert saved['telnet_options'] == {}  # Manual login is the upgrade default.
     assert vault.effective_profile(saved)['password'] == 'existing-secret'
-    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 17
+    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 18
     vault.close()
 
 

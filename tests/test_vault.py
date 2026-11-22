@@ -28,7 +28,7 @@ def test_encrypted_profile_crud_and_unlock(tmp_path):
     vault = Vault(path, password)
     saved = vault.profiles()[0]
     assert vault.credential(saved['credential_id'])['password'] == profile['password']
-    assert saved == dict(profile, rdp_options={}, rdp_domain='', ssh_advanced={}, connect_at_startup=0, key_passphrase='', telnet_options={}, credential_source='local', credential_id=saved['credential_id'], id=profile_id, folder_id=None, protocol='ssh', icon='terminal', tab_color='', terminal_options={}, connect_timeout=15)
+    assert saved == dict(profile, rdp_options={}, rdp_domain='', ssh_advanced={}, connect_at_startup=0, ssh_reconnect_delay=0, key_passphrase='', telnet_options={}, credential_source='local', credential_id=saved['credential_id'], id=profile_id, folder_id=None, protocol='ssh', icon='terminal', tab_color='', terminal_options={}, connect_timeout=15)
     saved['host'] = 'edited.example'
     vault.save(saved)
     assert vault.profiles()[0]['host'] == 'edited.example'

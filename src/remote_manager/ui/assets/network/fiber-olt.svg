@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <rect x="1" y="1" width="46" height="46" rx="9" fill="#405784"/>
+  <g fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="5" y="10" width="38" height="16" rx="2"/>
+    <path d="M11 15h4v6h-4zm7 0h4v6h-4zm8 0h4v6h-4zm7 0h4v6h-4z"/>
+  </g>
+  <text x="24" y="42" text-anchor="middle" font-family="sans-serif" font-size="10" font-weight="bold" fill="#fff">OLT</text>
+</svg>

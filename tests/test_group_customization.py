@@ -125,6 +125,7 @@ def test_schema11_adds_customization_without_changing_profiles(tmp_path):
     profile = vault.profiles()[0]
     vault.connection.execute('DROP TABLE tree_order')
     vault.connection.execute('DROP TABLE folder_appearance')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN ssh_reconnect_delay')
     vault.connection.execute('DROP TABLE ssh_private_keys')
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN rdp_options')
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN rdp_domain')
@@ -136,7 +137,7 @@ def test_schema11_adds_customization_without_changing_profiles(tmp_path):
     vault = Vault(path, 'master')
     assert vault.profiles()[0] == profile
     assert vault.tree_positions() == {}
-    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 17
+    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 18
     vault.close()
 
 

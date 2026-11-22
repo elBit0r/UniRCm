@@ -24,13 +24,13 @@ def test_encrypted_v1_migration_preserves_profiles(tmp_path):
     connection.commit()
     connection.close()
     vault = Vault(path, 'master')
-    assert vault.profiles() == [dict(PROFILE, rdp_options={}, rdp_domain='', ssh_advanced={}, connect_at_startup=0, key_passphrase='', telnet_options={}, credential_id=None, credential_source='local', password='', id=1, folder_id=None, protocol="ssh", icon="terminal", tab_color="", terminal_options={}, connect_timeout=15)]
+    assert vault.profiles() == [dict(PROFILE, rdp_options={}, rdp_domain='', ssh_advanced={}, connect_at_startup=0, ssh_reconnect_delay=0, key_passphrase='', telnet_options={}, credential_id=None, credential_source='local', password='', id=1, folder_id=None, protocol="ssh", icon="terminal", tab_color="", terminal_options={}, connect_timeout=15)]
     folder = vault.save_folder('private-folder-marker')
     vault.move_profile(1, folder)
     vault.close()
     assert b'private-folder-marker' not in path.read_bytes()
     vault = Vault(path, 'master')
-    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 17
+    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 18
     assert vault.profiles()[0]['folder_id'] == folder
     assert vault.folders()[0]['name'] == 'private-folder-marker'
     assert not vault.connection.execute('PRAGMA foreign_key_check').fetchall()
@@ -157,7 +157,7 @@ def test_tree_context_menu_targets_clicked_connection(qtbot, tmp_path, monkeypat
     command[0] = 'Duplicate'
     window.tree_context_menu(position)
     copy = window.selected()
-    assert copy == dict(PROFILE, rdp_options={}, rdp_domain='', ssh_advanced={}, connect_at_startup=0, key_passphrase='', telnet_options={}, credential_id=copy['credential_id'], credential_source='local', password='', id=copy['id'], name='SSH (copy)', folder_id=group, protocol='ssh', icon='terminal', tab_color='', terminal_options={}, connect_timeout=15)
+    assert copy == dict(PROFILE, rdp_options={}, rdp_domain='', ssh_advanced={}, connect_at_startup=0, ssh_reconnect_delay=0, key_passphrase='', telnet_options={}, credential_id=copy['credential_id'], credential_source='local', password='', id=copy['id'], name='SSH (copy)', folder_id=group, protocol='ssh', icon='terminal', tab_color='', terminal_options={}, connect_timeout=15)
     window.tree_context_menu(position)
     assert window.selected()['name'] == 'SSH (copy 2)'
     command[0] = 'Delete'

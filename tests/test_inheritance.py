@@ -159,6 +159,7 @@ def test_timeout_inheritance_editor_and_openssh(qtbot, tmp_path):
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN credential_id')
     vault.connection.execute('DROP TABLE credentials')
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN connect_timeout')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN ssh_reconnect_delay')
     vault.connection.execute('DROP TABLE ssh_private_keys')
     vault.connection.execute('PRAGMA user_version = 5')
     vault.connection.commit()

@@ -57,6 +57,7 @@ def test_v15_options_migration_preserves_domain_and_credentials(tmp_path):
     pid = vault.save(dict(name='Desktop', host='localhost', port=3389, username='alice',
                          identity_file='', password='secret', protocol='rdp', rdp_domain='CORP'))
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN rdp_options')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN ssh_reconnect_delay')
     vault.connection.execute('DROP TABLE ssh_private_keys')
     vault.connection.execute('PRAGMA user_version=15')
     vault.connection.commit()

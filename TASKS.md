@@ -1,6 +1,6 @@
 # Development Tasks
 
-Updated 2026-11-17. [PROJECT.md](PROJECT.md) defines product scope.
+Updated 2026-11-22. [PROJECT.md](PROJECT.md) defines product scope.
 
 ## Open work
 
@@ -25,6 +25,15 @@ Updated 2026-11-17. [PROJECT.md](PROJECT.md) defines product scope.
 - [ ] Validate FreeBSD builds and runtime, and check manylinux portability.
 
 ## Current functionality
+
+- **Icon library.** 201 icons, including 90 new service, system, device and platform
+  entries. Verified rendering and English/Italian search from the Linux wheel and
+  icon persistence for connections and groups in SQLCipher.
+
+- **Connection editor.** Field icons, radio buttons for credential and username sources, and
+  independent password/passphrase visibility. Optional SSH reconnection waits
+  for the per-profile delay stored in SQLCipher. Verified delayed replacement
+  with a real OpenSSH session on Linux loopback.
 
 - **Vault and credentials.** SQLCipher stores profiles and shared, inherited
   and per-connection credentials. The database chooser supports create, unlock,
@@ -123,6 +132,10 @@ Updated 2026-11-17. [PROJECT.md](PROJECT.md) defines product scope.
   offscreen in all three states.
 - Process-kill tests recovered committed changes before and after archive
   replacement and preserved the working copy on a wrong key or archive conflict.
+- Reproduced rejection of schema 18 by the installed schema-17 build with the
+  correct password. The current build opens it and distinguishes unsupported
+  schemas from archive locks. Twelve archive and vault tests passed, including
+  unchanged archive bytes after a second open attempt.
 - Real OpenSSH checks covered concurrent sessions, password and encrypted key
   authentication, Vim/mc, ProxyJump and forwarding. A passphrase-protected
   imported key worked after deleting its source file. A fresh login also
@@ -143,3 +156,21 @@ Updated 2026-11-17. [PROJECT.md](PROJECT.md) defines product scope.
 - Fixed the local PTY test launcher, which exited on OpenSSH options.
   Offscreen Qt checks verified that reconnect replaces a reordered tab in place
   and that a background process exit preserves the selected tab's status.
+- The SSH context menu opens a file manager with remote directory refresh,
+  navigation and selected-file downloads. Ten local SFTP tests passed.
+- The SSH file manager adds icons, a file context menu, folder creation,
+  rename and confirmed deletion. Eleven local OpenSSH/SFTP tests passed,
+  including rename collision and nonempty folder protection.
+- The SSH file manager shows the remote location above its toolbars and
+  displays readable sizes, modification times and Unix permissions. Eleven
+  local OpenSSH/SFTP tests passed, including the new location and metadata checks.
+- The SSH file manager adds a remote places sidebar and directory history
+  with themed toolbar buttons. Eleven local OpenSSH/SFTP tests passed.
+- File manager buttons now show icons with translated tooltips and
+  accessible names. Eleven local OpenSSH/SFTP tests passed.
+- Verified that all ten SSH file manager toolbar icons fit on one row
+  immediately below the location field in a Qt toolbar.
+- Restored labels beside the icons in the remote places sidebar and
+  verified the sidebar and toolbar button styles with Qt offscreen.
+- The SSH file manager toolbar uses QActions shared with the context menu.
+  Eleven local OpenSSH/SFTP tests passed.

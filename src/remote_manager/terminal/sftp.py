@@ -9,6 +9,7 @@ import struct
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
 
 
 def uint(value):
@@ -50,7 +51,8 @@ class Packet:
         if flags & 4:
             attrs['mode'] = self.integer()
         if flags & 8:
-            self.take(8)
+            self.integer()  # access time
+            attrs['mtime'] = self.integer()
         if flags & 0x80000000:
             for _ in range(self.integer()):
                 self.string()
@@ -69,6 +71,18 @@ class UploadCleanupError(OSError):
         self.path = path
         self.original = original
         super().__init__(f'{original} Temporary upload could not be removed: {path} ({cleanup})')
+
+
+@dataclass(frozen=True)
+class RemoteEntry:
+    name: str
+    size: int | None
+    mode: int | None
+    mtime: int | None
+
+    @property
+    def directory(self):
+        return stat.S_ISDIR(self.mode or 0)
 
 
 class SFTPClient:
@@ -176,13 +190,23 @@ class SFTPClient:
                     reply.string()  # server's long listing is not a path
                     attrs = reply.attrs()
                     if name not in ('.', '..') and name and '/' not in name and '\x00' not in name:
-                        entries.append((name, stat.S_ISDIR(attrs.get('mode', 0)), attrs.get('size', 0)))
+                        entries.append(RemoteEntry(name, attrs.get('size'), attrs.get('mode'),
+                                                   attrs.get('mtime')))
         finally:
             self.request(4, string(handle))
         return entries
 
     def size(self, path):
         return self.request(17, string(path), 105).attrs()['size']
+
+    def mkdir(self, path):
+        self.request(14, string(path) + uint(0))
+
+    def rename(self, source, destination):
+        self.request(18, string(source) + string(destination))
+
+    def remove(self, path, *, directory=False):
+        self.request(15 if directory else 13, string(path))
 
     def upload(self, local, remote, progress, overwrite=False):
         import uuid
@@ -208,7 +232,7 @@ class SFTPClient:
                     raise OSError('This server cannot safely replace an existing file. Choose a different name.')
                 self.request(200, string('posix-rename@openssh.com') + string(temporary) + string(remote))
             else:
-                self.request(18, string(temporary) + string(remote))
+                self.rename(temporary, remote)
         except BaseException as error:
             # An explicit rejected OPEN created nothing. Never delete a path
             # when the server rejected our exclusive creation (e.g. a collision).

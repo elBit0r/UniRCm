@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <rect x="1" y="1" width="46" height="46" rx="9" fill="#745335"/>
+  <g fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="8" y="9" width="30" height="20" rx="3"/>
+    <path d="M38 16h3v6h-3M24 12l-5 7h6l-3 7"/>
+  </g>
+  <text x="24" y="42" text-anchor="middle" font-family="sans-serif" font-size="10" font-weight="bold" fill="#fff">UPS</text>
+</svg>

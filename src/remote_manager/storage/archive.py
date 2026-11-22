@@ -19,6 +19,10 @@ class RecoveryConflict(ValueError):
     """The archive was replaced while a working copy was left behind."""
 
 
+class ArchiveInUse(BlockingIOError):
+    """Another open vault holds the archive lock."""
+
+
 def metadata(path):
     with zipfile.ZipFile(path) as archive:
         return _read_metadata(archive)
@@ -55,7 +59,10 @@ class ArchiveVault(Vault):
             lock = os.fstat(lock_fd)
             if not stat.S_ISREG(lock.st_mode) or lock.st_uid != os.getuid() or lock.st_nlink != 1:
                 raise PermissionError('Unsafe database lock file.')
-            fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise ArchiveInUse('Database is already open.') from error
             os.fchmod(lock_fd, 0o600)
             if description is None:
                 with self.archive_path.open('rb') as source, zipfile.ZipFile(source) as archive:

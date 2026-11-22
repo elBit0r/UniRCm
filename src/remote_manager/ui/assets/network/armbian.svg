@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <rect x="1" y="1" width="46" height="46" rx="9" fill="#764a6f"/>
+  <g fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="8" y="6" width="32" height="24" rx="2"/>
+    <rect x="14" y="11" width="12" height="13" rx="1"/>
+    <path d="M31 12h4m-4 5h4m-4 5h4"/>
+  </g>
+  <text x="24" y="42" text-anchor="middle" font-family="sans-serif" font-size="10" font-weight="bold" fill="#fff">ARM</text>
+</svg>

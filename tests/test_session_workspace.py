@@ -456,3 +456,27 @@ def test_removing_inactive_pane_keeps_active_session(qtbot):
     assert workspace.active is terms[2]
     assert workspace.positions[terms[2]] == 2
     assert workspace.panels[terms[2]][0].active
+
+
+def test_automatic_ssh_reconnect_after_client_interruption(qtbot, tmp_path, ssh_server):
+    import signal
+
+    path = tmp_path / 'auto-reconnect.db'
+    vault = Vault(path, 'master')
+    profile_id = vault.save(dict(ssh_server, ssh_reconnect_delay=1))
+    window = MainWindow(vault, path)
+    qtbot.addWidget(window)
+    terminal = window.open_profile(vault.profiles(profile_id)[0])
+    try:
+        qtbot.waitUntil(lambda: terminal.session_status.state == 'connected', timeout=10000)
+        terminal.process.send_signal(signal.SIGHUP)
+        qtbot.waitUntil(lambda: window.reconnect_pending(terminal), timeout=3000)
+        assert window.tabs.currentWidget() is terminal
+        qtbot.waitUntil(lambda: window.tabs.currentWidget() is not terminal, timeout=3000)
+        replacement = window.tabs.currentWidget()
+        assert window.tabs.count() == 1
+        qtbot.waitUntil(lambda: replacement.session_status.state == 'connected', timeout=10000)
+    finally:
+        while window.tabs.count():
+            window.close_tab(0, confirm=False)
+        window.close()

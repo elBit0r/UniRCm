@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <rect x="1" y="1" width="46" height="46" rx="9" fill="#345f86"/>
+  <g fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="10" y="7" width="28" height="23" rx="3"/>
+    <path d="M19 7v23m10-23v23m-15-5h1m9 0h1m8 0h1"/>
+  </g>
+  <text x="24" y="42" text-anchor="middle" font-family="sans-serif" font-size="10" font-weight="bold" fill="#fff">TN</text>
+</svg>

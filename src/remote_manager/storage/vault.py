@@ -23,6 +23,13 @@ def validate_kdf_iterations(iterations, *, minimum=LEGACY_KDF_ITERATIONS):
         raise ValueError('Invalid key derivation iteration count.')
 
 
+MAX_SSH_RECONNECT_DELAY = 600
+
+
+class UnsupportedSchemaVersion(RuntimeError):
+    """The vault schema is incompatible with this version of UniRCm."""
+
+
 def _configure_encryption(connection, password, iterations):
     validate_kdf_iterations(iterations)
     connection.set_key(password)
@@ -54,8 +61,8 @@ class Vault:
                 raise RuntimeError('SQLCipher 4 is required.')
             _configure_encryption(self.connection, password, self.kdf_iterations)
             self.connection.execute('SELECT count(*) FROM sqlite_master').fetchone()
-            if self.connection.execute('PRAGMA user_version').fetchone()[0] not in range(18):
-                raise RuntimeError('Unsupported database schema version.')
+            if self.connection.execute('PRAGMA user_version').fetchone()[0] not in range(19):
+                raise UnsupportedSchemaVersion('Unsupported database schema version.')
             self.connection.execute('PRAGMA journal_mode = DELETE')
             self.connection.execute('PRAGMA foreign_keys = ON')
             self.connection.execute('PRAGMA secure_delete = ON')
@@ -125,6 +132,12 @@ class Vault:
                         profile_id INTEGER PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
                         name TEXT NOT NULL, key_data BLOB NOT NULL)''')
                     self.connection.execute('PRAGMA user_version = 17')
+                if self.connection.execute('PRAGMA user_version').fetchone()[0] < 18:
+                    self.connection.execute(
+                        'ALTER TABLE profiles ADD COLUMN ssh_reconnect_delay INTEGER NOT NULL DEFAULT 0 '
+                        f'CHECK(ssh_reconnect_delay BETWEEN 0 AND {MAX_SSH_RECONNECT_DELAY})'
+                    )
+                    self.connection.execute('PRAGMA user_version = 18')
         except Exception:
             self.connection.close()
             raise
@@ -515,14 +528,17 @@ class Vault:
         from remote_manager.terminal.telnet import validate_options
         telnet_options = profile.get('telnet_options', {})
         validate_options(telnet_options)
-        values += (credential_id, source, json.dumps(telnet_options), int(bool(profile.get('connect_at_startup', False))), json.dumps(profile.get('ssh_advanced', {})), domain, json.dumps(profile.get('rdp_options', {})))
+        reconnect_delay = profile.get('ssh_reconnect_delay', 0) if profile.get('protocol', 'ssh') == 'ssh' else 0
+        if type(reconnect_delay) is not int or not 0 <= reconnect_delay <= MAX_SSH_RECONNECT_DELAY:
+            raise ValueError('Invalid SSH reconnect delay.')
+        values += (credential_id, source, json.dumps(telnet_options), int(bool(profile.get('connect_at_startup', False))), json.dumps(profile.get('ssh_advanced', {})), domain, json.dumps(profile.get('rdp_options', {})), reconnect_delay)
         if source == 'local':
             self.connection.execute('INSERT INTO credentials(id,username,password,key_passphrase) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET username=excluded.username,password=excluded.password,key_passphrase=excluded.key_passphrase',
                                     (credential_id, profile['username'], password, key_passphrase))
         if profile.get('id') is None:
-            return self.connection.execute('INSERT INTO profiles(name,host,port,username,identity_file,folder_id,protocol,icon,tab_color,terminal_options,ssh_modes,connect_timeout,credential_id,credential_source,telnet_options,connect_at_startup,ssh_advanced,rdp_domain,rdp_options) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', values).lastrowid
+            return self.connection.execute('INSERT INTO profiles(name,host,port,username,identity_file,folder_id,protocol,icon,tab_color,terminal_options,ssh_modes,connect_timeout,credential_id,credential_source,telnet_options,connect_at_startup,ssh_advanced,rdp_domain,rdp_options,ssh_reconnect_delay) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', values).lastrowid
         self.connection.execute("DELETE FROM tree_order WHERE kind='profile' AND item_id=? AND EXISTS (SELECT 1 FROM profiles WHERE id=? AND folder_id IS NOT ?)", (profile['id'], profile['id'], profile.get('folder_id')))
-        self.connection.execute('UPDATE profiles SET name=?,host=?,port=?,username=?,identity_file=?,folder_id=?,protocol=?,icon=?,tab_color=?,terminal_options=?,ssh_modes=?,connect_timeout=?,credential_id=?,credential_source=?,telnet_options=?,connect_at_startup=?,ssh_advanced=?,rdp_domain=?,rdp_options=? WHERE id=?', values + (profile['id'],))
+        self.connection.execute('UPDATE profiles SET name=?,host=?,port=?,username=?,identity_file=?,folder_id=?,protocol=?,icon=?,tab_color=?,terminal_options=?,ssh_modes=?,connect_timeout=?,credential_id=?,credential_source=?,telnet_options=?,connect_at_startup=?,ssh_advanced=?,rdp_domain=?,rdp_options=?,ssh_reconnect_delay=? WHERE id=?', values + (profile['id'],))
         return profile['id']
 
     def copy_profile(self, profile_id, folder_id, anchor=None, after=False):

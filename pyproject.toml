@@ -35,4 +35,4 @@ addopts = "-ra"
 
 [tool.setuptools.package-data]
 "remote_manager.protocols" = ["native/*.c", "native/*.h"]
-"remote_manager.ui" = ["assets/unircm.png", "assets/papirus/*.svg", "assets/papirus/LICENSE", "assets/papirus/SOURCES.json"]
+"remote_manager.ui" = ["assets/unircm.png", "assets/papirus/*.svg", "assets/papirus/LICENSE", "assets/papirus/SOURCES.json", "assets/network/*.svg"]

@@ -20,6 +20,13 @@ Save settings\tSalva impostazioni
 Credential details\tDettagli credenziale
 Enter a credential name.\tInserisci un nome per la credenziale.
 Enter a hostname or SSH alias.\tInserisci un nome host o un alias SSH.
+Use this username	Usa questo nome utente
+Show key passphrase	Mostra passphrase della chiave
+Reconnect after SSH connection loss	Riconnetti dopo la perdita della connessione SSH
+Retry after an established SSH session loses its connection.	Riprova quando una sessione SSH già aperta perde la connessione.
+Reconnect delay	Attesa prima della riconnessione
+Time to wait before trying to reconnect.	Tempo di attesa prima di tentare la riconnessione.
+Reconnecting in %1 s	Riconnessione tra %1 s
 Show passwords\tMostra password
 Show or hide the password and private-key passphrase.\tMostra o nasconde la password e la passphrase della chiave privata.
 Show or hide the entered master passwords.\tMostra o nasconde le password principali inserite.
@@ -78,12 +85,38 @@ Disconnect and close only this pane.	Disconnette e chiude solo questo pannello.
 Disconnect and close this pane?	Disconnettere e chiudere questo pannello?
 Disconnect all active sessions in this tab and close it?	Disconnettere tutte le sessioni attive in questa scheda e chiuderla?
 SSH file transfer	Trasferimento file SSH
+SSH file manager	Gestione file SSH
+File manager	Gestione file
+Browse and download remote files	Sfoglia e scarica i file remoti
+Download selected files	Scarica i file selezionati
+Refresh	Aggiorna
+New folder	Nuova cartella
+Rename	Rinomina
+Enter a single file or folder name.	Inserisci un singolo nome di file o cartella.
+Updating remote directory…	Aggiornamento della cartella remota…
+Folder created.	Cartella creata.
+Item renamed.	Elemento rinominato.
+Item deleted.	Elemento eliminato.
+Delete this empty remote folder?	Eliminare questa cartella remota vuota?
+Delete this remote file?	Eliminare questo file remoto?
+SFTP operation failed: %1	Operazione SFTP non riuscita: %1
 Wait for the current operation before uploading more files.	Attendi il completamento dell’operazione prima di caricare altri file.
 Transfer cancelled.	Trasferimento annullato.
 Temporary upload could not be removed: %1. Check the connection and remove this file manually.	Impossibile eliminare il file temporaneo: %1. Controlla la connessione ed elimina manualmente questo file.
 Upload file	Carica file
 Download file	Scarica file
 Remote directory (independent of the terminal):	Cartella remota (indipendente dal terminale):
+Remote location	Percorso remoto
+Remote places	Risorse remote
+Remote home	Home remota
+Filesystem root	Radice del filesystem
+Back	Indietro
+Forward	Avanti
+Items: %1	Elementi: %1
+Enter a remote path and press Enter.	Digita un percorso remoto e premi Invio.
+Modified	Ultima modifica
+Permissions	Permessi
+%1 bytes	%1 byte
 Open directory	Apri cartella
 Parent directory	Cartella superiore
 Bytes	Byte
@@ -379,6 +412,8 @@ Unable to duplicate connection in the encrypted database.	Impossibile duplicare 
 Unable to move the connection.	Impossibile spostare la connessione.
 Unable to unlock database. Check the password and database access.	Impossibile sbloccare il database. Controlla la password e l'accesso al database.
 The archive has changed. Its encrypted working copy was preserved.	L’archivio è cambiato. La copia di lavoro cifrata è stata conservata.
+This database is already open. Close it before trying again.	Il database è già aperto. Chiudilo prima di riprovare.
+This database requires a compatible version of UniRCm. Open it with the version that last saved it or a newer version.	Il database richiede una versione compatibile di UniRCm. Aprilo con la versione che lo ha salvato per ultima o con una versione più recente.
 Unlock the selected database with its master password.	Sblocca il database selezionato con la password principale.
 Server	Server
 Router	Router
@@ -515,6 +550,48 @@ ITALIAN.update({
     'Padlock': 'Lucchetto',
     'Search icons…': 'Cerca icone…',
     'Available icons': 'Icone disponibili',
+    'Serial console': 'Console seriale',
+    'Bastion host': 'Host bastione',
+    'NTP server': 'Server NTP',
+    'Load balancer': 'Bilanciatore di carico',
+    'Forward proxy': 'Proxy esplicito',
+    'Certificate authority': 'Autorità di certificazione',
+    'S3 object storage': 'Storage a oggetti S3',
+    'Backup server': 'Server di backup',
+    'SIP PBX': 'Centralino SIP',
+    'MQTT broker': 'Broker MQTT',
+    'API gateway': 'Gateway API',
+    'Git server': 'Server Git',
+    'Container registry': 'Registro container',
+    'CI/CD server': 'Server CI/CD',
+    'Log collector': 'Raccolta log',
+    'Fiber ONT': 'ONT in fibra',
+    'Fiber OLT': 'OLT in fibra',
+    'Fiber / Ethernet converter': 'Convertitore fibra / Ethernet',
+    'LTE / 5G modem': 'Modem LTE / 5G',
+    'Aggregation switch': 'Switch di aggregazione',
+    'Outdoor access point': 'Access point da esterno',
+    'Mesh node': 'Nodo mesh',
+    'Directional CPE': 'CPE direzionale',
+    'Point-to-point wireless bridge': 'Ponte radio punto-punto',
+    'Sector antenna': 'Antenna settoriale',
+    'Rack server': 'Server rack',
+    'Blade server': 'Server blade',
+    'Managed PDU': 'PDU gestita',
+    'IP KVM console': 'Console KVM IP',
+    'PTZ camera': 'Telecamera PTZ',
+    'IP video intercom': 'Videocitofono IP',
+    'IoT gateway': 'Gateway IoT',
+    'DNS server': 'Server DNS',
+    'Web server (WWW)': 'Server web (WWW)',
+    'FTP server': 'Server FTP',
+    'SFTP server': 'Server SFTP',
+    'DHCP server': 'Server DHCP',
+    'VPN gateway': 'Gateway VPN',
+    'Reverse proxy': 'Proxy inverso',
+    'Network bridge': 'Bridge di rete',
+    'Ubiquiti antenna': 'Antenna Ubiquiti',
+    'Wi-Fi router': 'Router Wi-Fi',
     'Choose an icon from the library.': 'Scegli un’icona dalla libreria.',
     'Cloud upload': 'Caricamento cloud',
     'Cloud download': 'Download cloud',

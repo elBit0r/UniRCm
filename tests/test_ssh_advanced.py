@@ -18,6 +18,7 @@ def test_encrypted_migration_and_group_inheritance(tmp_path):
         vault.connection.execute('ALTER TABLE profiles DROP COLUMN rdp_options')
         vault.connection.execute('ALTER TABLE profiles DROP COLUMN rdp_domain')
         vault.connection.execute('ALTER TABLE profiles DROP COLUMN ssh_advanced')
+        vault.connection.execute('ALTER TABLE profiles DROP COLUMN ssh_reconnect_delay')
         vault.connection.execute('DROP TABLE ssh_private_keys')
         vault.connection.execute('PRAGMA user_version=13')
     vault.close()

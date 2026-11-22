@@ -222,7 +222,7 @@ def test_italian_interface_preserves_profile_names(qtbot, tmp_path):
         assert window.tree.topLevelItem(0).text(0) == 'Settings'  # User text.
         profile = ProfileDialog(parent=window)
         assert profile.tabs.tabText(0) == 'Generale'
-        assert profile.credential_selector.source.itemText(0) == 'Credenziali della connessione'
+        assert profile.credential_selector.source_options['local'].text() == 'Credenziali della connessione'
         settings = SettingsDialog(vault, window)
         settings.show()
         assert settings.windowTitle() == 'Impostazioni database'

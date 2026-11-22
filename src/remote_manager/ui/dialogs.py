@@ -7,17 +7,18 @@ from .icons import connection_icon, action_icon
 from .icon_picker import IconPicker
 from .visuals import brand_header, title_label, style_surface
 from .forms import (NamedButtonBox, polish_dialog, primary_action, section,
-                    validated_field, require_fields)
+                    validated_field, require_fields, icon_label)
 from .ssh_advanced import AdvancedSSHOptions
 from .rdp_options import RdpOptions
 
-from PyQt6.QtWidgets import (QApplication, QFontComboBox, QColorDialog, QTabWidget, QVBoxLayout, QWidget,QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+from PyQt6.QtWidgets import (QApplication, QButtonGroup, QRadioButton, QFontComboBox, QColorDialog, QTabWidget, QVBoxLayout, QWidget,QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                             QFormLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QFrame,
                             QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox)
 
-from remote_manager.storage.archive import ArchiveVault, RecoveryConflict
+from remote_manager.storage.archive import ArchiveInUse, ArchiveVault, RecoveryConflict
 from remote_manager.storage.vault import Vault, SSH_DEFAULTS, resolve_ssh, validate_ssh_settings, validate_group_appearance
-from remote_manager.storage.vault import DEFAULT_KDF_ITERATIONS, MAX_KDF_ITERATIONS
+from remote_manager.storage.vault import DEFAULT_KDF_ITERATIONS, MAX_KDF_ITERATIONS, MAX_SSH_RECONNECT_DELAY
+from remote_manager.storage.vault import UnsupportedSchemaVersion
 from remote_manager.terminal.ssh import ssh_command
 from remote_manager.terminal.private_key import read_imported_key
 from remote_manager.terminal.appearance import DEFAULT_OPTIONS, default_font
@@ -181,6 +182,10 @@ class VaultUnlockPanel(QWidget):
         except Exception as error:
             if isinstance(error, RecoveryConflict):
                 self.error.setText(self.tr('The archive has changed. Its encrypted working copy was preserved.'))
+            elif isinstance(error, ArchiveInUse):
+                self.error.setText(self.tr('This database is already open. Close it before trying again.'))
+            elif isinstance(error, UnsupportedSchemaVersion):
+                self.error.setText(self.tr('This database requires a compatible version of UniRCm. Open it with the version that last saved it or a newer version.'))
             else:
                 self.error.setText(self.tr('Unable to unlock database. Check the password and database access.'))
             self.password.selectAll()
@@ -291,7 +296,7 @@ class ProfileDialog(QDialog):
         self.profile = dict(profile or {})
         self.folders = folders
         self.save_callback = save_callback
-        self.setWindowTitle('Edit connection' if profile else 'New connection')
+        self.setWindowTitle(self.tr('Edit connection') if profile else self.tr('New connection'))
         self.resize(760, 660)
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -304,9 +309,10 @@ class ProfileDialog(QDialog):
         for key, title in [('name', 'Connection name'), ('host', 'Hostname / SSH alias')]:
             self.fields[key] = QLineEdit(self.profile.get(key, ''))
         section(form, 'Connection details')
-        form.addRow(self.tr('Connection name'), validated_field(self, self.fields['name']))
+        form.addRow(icon_label(self, self.tr('Connection name'), 'file-code', self.fields['name']),
+                    validated_field(self, self.fields['name']))
         self.folder = folder_combo(folders, self.profile.get('folder_id', folder_id))
-        form.addRow(self.tr('Group'), self.folder)
+        form.addRow(icon_label(self, self.tr('Group'), 'folder', self.folder), self.folder)
         self._ssh_port = self.profile.get('port', 22)
         self.protocol = QComboBox()
         self.protocol.addItem('SSH', 'ssh')
@@ -319,8 +325,9 @@ class ProfileDialog(QDialog):
         self.connect_at_startup.setChecked(bool(self.profile.get('connect_at_startup', False)))
         self.connect_at_startup.setToolTip(self.tr('Open this connection automatically after unlocking the database at application startup.'))
         section(form, 'Destination')
-        form.addRow(self.tr('Protocol'), self.protocol)
-        form.addRow(self.tr('Hostname / SSH alias'), validated_field(self, self.fields['host']))
+        form.addRow(icon_label(self, self.tr('Protocol'), 'network', self.protocol), self.protocol)
+        form.addRow(icon_label(self, self.tr('Hostname / SSH alias'), 'server', self.fields['host']),
+                    validated_field(self, self.fields['host']))
         self.desktop_port = QSpinBox()
         self.desktop_port.setRange(1, 65535)
         self.desktop_port.setValue(self.profile.get('port', 3389))
@@ -329,7 +336,7 @@ class ProfileDialog(QDialog):
         port_layout = QHBoxLayout(self.port_row)
         port_layout.setContentsMargins(0, 0, 0, 0)
         port_layout.addWidget(self.port)
-        form.addRow(self.tr('Port'), self.port_row)
+        form.addRow(icon_label(self, self.tr('Port'), 'plug', self.port), self.port_row)
         self.desktop_port.setToolTip(self.tr('Connection port. Editing the SSH port overrides the inherited group value.'))
         self._protocol_ports = dict(ssh=22, rdp=3389, vnc=5900, telnet=23)
         self._protocol_ports[self.profile.get('protocol', 'ssh')] = self.profile.get('port', 22)
@@ -338,8 +345,22 @@ class ProfileDialog(QDialog):
         ssh_form = QFormLayout(ssh)
         self.tabs.addTab(ssh, self.tr('SSH'))
         self.credentials = CredentialsEditor(self.profile, self)
-        self.finished.connect(lambda _: self.credentials.show_secrets.setChecked(False))
+        self.finished.connect(self.credentials.hide_secrets)
         form.addRow(self.connect_at_startup)
+        saved_delay = self.profile.get('ssh_reconnect_delay', 0)
+        self.auto_reconnect = QCheckBox(self.tr('Reconnect after SSH connection loss'))
+        self.auto_reconnect.setIcon(action_icon(self, 'Reconnect'))
+        self.auto_reconnect.setToolTip(self.tr('Retry after an established SSH session loses its connection.'))
+        self.auto_reconnect.setChecked(saved_delay > 0)
+        self.reconnect_delay = QSpinBox()
+        self.reconnect_delay.setRange(1, MAX_SSH_RECONNECT_DELAY)
+        self.reconnect_delay.setSuffix(self.tr(' s'))
+        self.reconnect_delay.setValue(saved_delay or 5)
+        self.reconnect_delay.setEnabled(self.auto_reconnect.isChecked())
+        self.reconnect_delay.setToolTip(self.tr('Time to wait before trying to reconnect.'))
+        self.auto_reconnect.toggled.connect(self.reconnect_delay.setEnabled)
+        form.addRow(self.auto_reconnect)
+        form.addRow(icon_label(self, self.tr('Reconnect delay'), 'gauge', self.reconnect_delay), self.reconnect_delay)
         section(form, 'Authentication')
         form.addRow(self.credentials)
         self.rdp_domain = QLineEdit(self.profile.get('rdp_domain', ''))
@@ -348,7 +369,7 @@ class ProfileDialog(QDialog):
         form.addRow(self.tr('Domain'), self.rdp_domain)
         self.credential_selector = CredentialSelector(getattr(parent, 'vault', None), self.profile.get('credential_source', 'local'), self.profile.get('credential_id'), parent=self)
         form.insertRow(form.getWidgetPosition(self.credentials)[0], self.credential_selector)
-        self.credential_selector.source.currentIndexChanged.connect(self.update_effective_values)
+        self.credential_selector.source_changed.connect(self.update_effective_values)
         self.fields['username'] = self.credentials.username
         self.identity = QLineEdit(self.profile.get('identity_file', ''))
         self.imported_key_name = self.profile.get('imported_key_name')
@@ -386,28 +407,32 @@ class ProfileDialog(QDialog):
                                   ('username', 'Username source', self.fields['username']),
                                   ('identity_file', 'Private key source', self.identity),
                                   ('connect_timeout', 'Timeout source', self.connect_timeout)]:
-            mode = QComboBox()
-            for title, value in [('Override', 'override'), ('Inherit from group', 'inherit'), ('Application default', 'default')]:
-                mode.addItem(self.tr(title), value)
-            mode.setCurrentIndex(mode.findData(self.profile.get('ssh_modes', {}).get(key, 'override' if profile else 'inherit')))
+            selected = self.profile.get('ssh_modes', {}).get(key, 'override' if profile else 'inherit')
+            if key == 'username':
+                mode = UsernameSource(selected)
+                changed = mode.changed
+            else:
+                mode = source_combo(selected)
+                changed = mode.currentIndexChanged
             if key == 'port':
                 self.ssh_modes[key] = mode
                 mode.setToolTip(self.tr('Port source'))
                 self.port_row.layout().addWidget(mode, 1)
-                mode.currentIndexChanged.connect(self.update_effective_values)
+                changed.connect(self.update_effective_values)
                 continue
-            mode.currentIndexChanged.connect(lambda _, m=mode, f=field: f.setEnabled(m.currentData() == 'override'))
+            changed.connect(lambda *_args, m=mode, f=field: f.setEnabled(m.currentData() == 'override'))
             field.setEnabled(mode.currentData() == 'override')
             self.ssh_modes[key] = mode
             value_widget = identity_widget if key == 'identity_file' else field
-            row, note = inheritance_row(mode, value_widget)
+            row, note = inheritance_row(mode, value_widget, stacked=key == 'username')
             if key == 'username':
                 self.username_row = row
-                self.credentials.form.insertRow(0, self.tr('Username'), row)
+                self.credentials.form.insertRow(0, icon_label(self, self.tr('Username'), 'user', field), row)
             else:
-                ssh_form.addRow(self.tr(label.replace(' source', '')), row)
+                icon = 'key-round' if key == 'identity_file' else 'gauge'
+                ssh_form.addRow(icon_label(self, self.tr(label.replace(' source', '')), icon, field), row)
             self.effective_labels[key] = (note, value_widget)
-            mode.currentIndexChanged.connect(self.update_effective_values)
+            changed.connect(self.update_effective_values)
         self.ssh_advanced = AdvancedSSHOptions(self.profile.get('ssh_advanced', {}), self)
         advanced_page = QWidget()
         self.advanced_page = advanced_page
@@ -577,7 +602,7 @@ class ProfileDialog(QDialog):
         if not hasattr(self, 'appearance_modes'):
             return
         protocol = self.protocol.currentData()
-        source = self.credential_selector.source.currentData()
+        source = self.credential_selector.selected_source()
         local = source == 'local'
         terminal = protocol in ('ssh', 'telnet')
         manual_telnet = protocol == 'telnet' and self.telnet_login.currentData() == 'manual'
@@ -587,7 +612,15 @@ class ProfileDialog(QDialog):
         self.credential_selector.setToolTip(self.tr('Manual Telnet login does not use stored credentials.') if manual_telnet else '')
         username_used = protocol != 'telnet' or self.telnet_login.currentData() == 'username_password'
         password_used = protocol in ('ssh', 'rdp') or (protocol == 'telnet' and self.telnet_login.currentData() != 'manual')
+        self.general_form.setRowVisible(self.auto_reconnect, protocol == 'ssh')
+        self.general_form.setRowVisible(self.reconnect_delay, protocol == 'ssh')
         self.general_form.setRowVisible(self.credentials, source in ('local', 'none'))
+        if not (local and password_used):
+            self.credentials.show_secrets.setChecked(False)
+        if not (local and protocol == 'ssh'):
+            self.credentials.show_key_passphrase.setChecked(False)
+        self.credentials.form.setRowVisible(self.credentials.show_secrets, local and password_used)
+        self.credentials.form.setRowVisible(self.credentials.show_key_passphrase, local and protocol == 'ssh')
         self.username_row.setEnabled(username_used)
         self.credentials.username.setEnabled(username_used and self.ssh_modes['username'].currentData() == 'override')
         self.credentials.password.setEnabled(local and password_used)
@@ -667,6 +700,9 @@ class ProfileDialog(QDialog):
         profile['rdp_options'] = self.rdp_options.options()
         profile['rdp_domain'] = self.rdp_domain.text().strip()
         profile['connect_at_startup'] = self.connect_at_startup.isChecked()
+        profile['ssh_reconnect_delay'] = (
+            self.reconnect_delay.value() if self.protocol.currentData() == 'ssh' and self.auto_reconnect.isChecked() else 0
+        )
         profile['ssh_advanced'] = self.ssh_advanced.options()
         profile['credential_id'] = self.profile.get('credential_id')
         profile.update(connect_timeout=self.connect_timeout.value(), id=self.profile.get('id'), port=self._ssh_port, identity_file=self.identity.text().strip(), folder_id=self.folder.currentData(), protocol=self.protocol.currentData(), icon=self.icon.selected_icon(), tab_color=self.tab_color, terminal_options=self.terminal_options.options())
@@ -870,7 +906,7 @@ class GroupDefaultsDialog(QDialog):
         self.credential_selector = CredentialSelector(getattr(parent, 'vault', None), 'inherit' if 'credential_id' not in settings else 'shared' if settings['credential_id'] else 'none', settings.get('credential_id'), group=True, parent=self)
         section(general_form, 'Authentication', 'Connections can inherit a shared credential from this group.')
         general_form.addRow(self.credential_selector)
-        self.credential_selector.source.currentIndexChanged.connect(self.update_effective_values)
+        self.credential_selector.source_changed.connect(self.update_effective_values)
         for key, label, default in [('port', 'Port', 22), ('username', 'Username', ''), ('identity_file', 'Private key', ''), ('connect_timeout', 'Connection timeout (seconds)', 15)]:
             mode = QComboBox()
             for title, value in [('Inherit from parent', 'inherit'), ('Override', 'override'), ('Application default', 'default')]:
@@ -1015,6 +1051,36 @@ class GroupDefaultsDialog(QDialog):
         self.accept()
 
 
+class UsernameSource(QWidget):
+    changed = pyqtSignal()
+
+    def __init__(self, selected):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.group = QButtonGroup(self)
+        self.options = {}
+        for value, label, icon in (
+            ('override', 'Use this username', 'user'),
+            ('inherit', 'Inherit from group', 'folder'),
+            ('default', 'Application default', 'terminal'),
+        ):
+            button = QRadioButton(self.tr(label))
+            button.setIcon(connection_icon(icon, self.palette()))
+            self.group.addButton(button)
+            self.options[value] = button
+            layout.addWidget(button)
+        self.options.get(selected, self.options['inherit']).setChecked(True)
+        self.group.buttonToggled.connect(self.selection_changed)
+
+    def selection_changed(self, _button, checked):
+        if checked:
+            self.changed.emit()
+
+    def currentData(self):
+        return next(value for value, button in self.options.items() if button.isChecked())
+
+
 def source_combo(selected, parent=None):
     combo = QComboBox(parent)
     for label, value in [('Override', 'override'), ('Inherit from group', 'inherit'), ('Application default', 'default')]:
@@ -1068,12 +1134,12 @@ class TerminalAppearanceDialog(QDialog):
         self.accept()
 
 
-def inheritance_row(mode, field):
+def inheritance_row(mode, field, *, stacked=False):
     widget = QWidget()
     note = QLabel()
     note.setWordWrap(True)
     note.setProperty('effectiveValue', True)
-    compact = isinstance(field, (QLineEdit, QSpinBox)) or isinstance(field.layout(), QHBoxLayout)
+    compact = not stacked and (isinstance(field, (QLineEdit, QSpinBox)) or isinstance(field.layout(), QHBoxLayout))
     layout = QHBoxLayout(widget) if compact else QVBoxLayout(widget)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(6)

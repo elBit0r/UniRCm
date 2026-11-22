@@ -1,9 +1,11 @@
 """Protocol-independent username/password editor."""
-from PyQt6.QtWidgets import QWidget, QFormLayout, QLineEdit, QCheckBox
+from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtWidgets import QWidget, QFormLayout, QLineEdit, QCheckBox, QButtonGroup, QGridLayout, QRadioButton
 
+from .icons import action_icon, connection_icon
 from .visuals import title_label
 from .forms import (NamedButtonBox, polish_dialog, primary_action, section,
-                    validated_field, require_fields, field_error, clear_field)
+                    validated_field, require_fields, field_error, clear_field, icon_label)
 
 
 class CredentialsEditor(QWidget):
@@ -19,16 +21,21 @@ class CredentialsEditor(QWidget):
         self.key_passphrase.setToolTip(self.tr('SSH private-key passphrase, stored in the common encrypted credential. Select or import the matching private key in SSH properties. Other protocols do not send it. Automatic key unlocking disables SSH keyboard-interactive authentication for this session.'))
         self.username.setToolTip(self.tr('Username used to authenticate to the remote server.'))
         self.password.setToolTip(self.tr('Stored only in the encrypted database. Leave empty to authenticate interactively or with a key/agent.'))
-        self.form.addRow(self.tr('Password'), self.password)
-        self.form.addRow(self.tr('Private-key passphrase (SSH)'), self.key_passphrase)
-        self.show_secrets = QCheckBox(self.tr('Show passwords'))
-        from .icons import action_icon
-        self.show_secrets.setIcon(action_icon(self, 'Credentials'))
-        self.show_secrets.setToolTip(self.tr('Show or hide the password and private-key passphrase.'))
-        self.show_secrets.toggled.connect(lambda visible: [field.setEchoMode(
-            QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password)
-            for field in (self.password, self.key_passphrase)])
-        self.form.addRow(self.show_secrets)
+        self.form.addRow(icon_label(self, self.tr('Password'), 'lock', self.password), self.password)
+        self.form.addRow(icon_label(self, self.tr('Private-key passphrase (SSH)'), 'key-round', self.key_passphrase), self.key_passphrase)
+        self.show_secrets = QCheckBox(self.tr('Show password'))
+        self.show_key_passphrase = QCheckBox(self.tr('Show key passphrase'))
+        for toggle, field in ((self.show_secrets, self.password), (self.show_key_passphrase, self.key_passphrase)):
+            toggle.setIcon(action_icon(self, 'View only'))
+            toggle.setToolTip(toggle.text())
+            toggle.toggled.connect(lambda visible, edit=field: edit.setEchoMode(
+                QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password))
+        self.form.insertRow(1, self.show_secrets)
+        self.form.addRow(self.show_key_passphrase)
+
+    def hide_secrets(self):
+        self.show_secrets.setChecked(False)
+        self.show_key_passphrase.setChecked(False)
 
     def values(self):
         return {'username': self.username.text().strip(), 'password': self.password.text(), 'key_passphrase': self.key_passphrase.text()}
@@ -36,6 +43,8 @@ class CredentialsEditor(QWidget):
 
 class CredentialSelector(QWidget):
     """References only: never display a shared secret in connection/group editors."""
+    source_changed = pyqtSignal()
+
     def __init__(self, vault, source='local', credential_id=None, group=False, parent=None):
         super().__init__(parent)
         from PyQt6.QtWidgets import QComboBox, QLabel
@@ -43,14 +52,32 @@ class CredentialSelector(QWidget):
         self.group = group
         self.form = QFormLayout(self)
         self.form.setContentsMargins(0, 0, 0, 0)
-        self.source = QComboBox()
         choices = [('Inherit from parent' if group else 'Inherit from group', 'inherit'),
                    ('Shared credential', 'shared'), ('No shared credential', 'none')]
         if not group:
             choices.insert(0, ('Connection credentials', 'local'))
-        for label, value in choices:
-            self.source.addItem(self.tr(label), value)
-        self.source.setCurrentIndex(max(0, self.source.findData(source)))
+        if group:
+            self.source = QComboBox()
+            for label, value in choices:
+                self.source.addItem(self.tr(label), value)
+            self.source.setCurrentIndex(max(0, self.source.findData(source)))
+            source_widget = self.source
+            self.source.currentIndexChanged.connect(self.source_changed.emit)
+        else:
+            source_widget = QWidget()
+            layout = QGridLayout(source_widget)
+            layout.setContentsMargins(0, 0, 0, 0)
+            self.source_buttons = QButtonGroup(self)
+            self.source_options = {}
+            icons = {'local': 'user', 'shared': 'users', 'inherit': 'folder', 'none': 'terminal'}
+            for index, (label, value) in enumerate(choices):
+                button = QRadioButton(self.tr(label))
+                button.setIcon(connection_icon(icons[value], self.palette()))
+                layout.addWidget(button, index // 2, index % 2)
+                self.source_buttons.addButton(button)
+                self.source_options[value] = button
+            self.source_options.get(source, self.source_options['local']).setChecked(True)
+            self.source_buttons.buttonToggled.connect(self.source_toggled)
         self.reference = QComboBox()
         self.reference.addItem(self.tr('Select credential…'), None)
         for credential in vault.shared_credentials() if vault else ():
@@ -59,17 +86,26 @@ class CredentialSelector(QWidget):
         self.note = QLabel()
         self.note.setWordWrap(True)
         self.note.setProperty('effectiveValue', True)
-        self.form.addRow(self.tr('Credential source'), self.source)
+        self.form.addRow(self.tr('Credential source'), source_widget)
         self.reference_row = validated_field(self, self.reference)
         self.form.addRow(self.tr('Shared credential'), self.reference_row)
         self.form.addRow(self.note)
-        self.source.currentIndexChanged.connect(self.update_state)
+        self.source_changed.connect(self.update_state)
         self.update_state()
 
+    def source_toggled(self, button, checked):
+        if checked:
+            self.source_changed.emit()
+
+    def selected_source(self):
+        if self.group:
+            return self.source.currentData()
+        return next(value for value, button in self.source_options.items() if button.isChecked())
+
     def update_state(self, *_):
-        self.form.setRowVisible(self.reference_row, self.source.currentData() == 'shared')
+        self.form.setRowVisible(self.reference_row, self.selected_source() == 'shared')
         clear_field(self, self.reference)
-        self.reference.setEnabled(self.source.currentData() == 'shared')
+        self.reference.setEnabled(self.selected_source() == 'shared')
 
     def inherited(self, folder_id, folders):
         from remote_manager.storage.vault import resolve_ssh
@@ -92,10 +128,10 @@ class CredentialSelector(QWidget):
                 break
             ancestor = folder.get('parent_id')
         self.note.setText(self.tr('Inherited credential: ') + (credential['name'] if credential else self.tr('None')) + origin)
-        self.note.setVisible(self.source.currentData() == 'inherit')
+        self.note.setVisible(self.selected_source() == 'inherit')
 
     def values(self):
-        source = self.source.currentData()
+        source = self.selected_source()
         reference = self.reference.currentData() if source == 'shared' else None
         if source == 'shared' and not reference:
             field_error(self, self.reference, self.tr('Select a shared credential.'))
@@ -192,7 +228,7 @@ class CredentialManager:
             editor.resize(620, 360)
             polish_dialog(editor)
             editor.exec()
-            fields.show_secrets.setChecked(False)
+            fields.hide_secrets()
             fields.password.clear()
             fields.key_passphrase.clear()
             refresh()

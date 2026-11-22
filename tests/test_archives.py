@@ -6,7 +6,7 @@ import zipfile
 import pytest
 from sqlcipher3 import dbapi2 as sqlcipher
 
-from remote_manager.storage.archive import ArchiveVault, RecoveryConflict, metadata
+from remote_manager.storage.archive import ArchiveInUse, ArchiveVault, RecoveryConflict, metadata
 from remote_manager.storage.vault import Vault
 
 
@@ -18,8 +18,10 @@ def test_archive_encryption_isolation_and_lock(tmp_path):
     assert int(vault.connection.execute('PRAGMA kdf_iter').fetchone()[0]) == 512_000
     vault.save(dict(name='Private server', host='private.example', port=22,
                     username='admin', identity_file=''))
-    with pytest.raises(BlockingIOError):
+    before = first.read_bytes()
+    with pytest.raises(ArchiveInUse):
         ArchiveVault(first, 'test-master')
+    assert first.read_bytes() == before
     with zipfile.ZipFile(first) as archive:
         encrypted = archive.read('database.db')
         assert not encrypted.startswith(b'SQLite format 3')
@@ -163,7 +165,6 @@ def test_chooser_inline_unlock_and_back(qtbot, tmp_path):
     from remote_manager.ui.databases import DatabaseChooser
     path = tmp_path / 'inline.uni'
     vault = ArchiveVault(path, 'correct password', 'Inline test')
-    vault.close()
     chooser = DatabaseChooser(tmp_path / 'missing.db')
     qtbot.addWidget(chooser)
     chooser.show()
@@ -174,6 +175,11 @@ def test_chooser_inline_unlock_and_back(qtbot, tmp_path):
     assert not hasattr(panel, 'kdf_iterations')
     assert not panel.isWindow()
     assert not chooser.findChildren(QDialog)
+    panel.password.setText('correct password')
+    panel.submit()
+    assert panel.error.text() == panel.tr('This database is already open. Close it before trying again.')
+    assert chooser.vault is None
+    vault.close()
     panel.password.setText('wrong password')
     panel.submit()
     assert panel.error.text()
@@ -189,6 +195,30 @@ def test_chooser_inline_unlock_and_back(qtbot, tmp_path):
     assert chooser.path == path
     assert not panel.password.text()
     chooser.vault.close()
+
+
+def test_chooser_reports_incompatible_schema(qtbot, tmp_path):
+    from remote_manager.ui.databases import DatabaseChooser
+
+    path = tmp_path / 'newer.uni'
+    vault = ArchiveVault(path, 'correct password', 'Newer test')
+    with vault.connection as connection:
+        connection.execute('PRAGMA user_version = 999')
+    vault.close()
+    before = path.read_bytes()
+
+    chooser = DatabaseChooser(tmp_path / 'missing.db')
+    qtbot.addWidget(chooser)
+    chooser.open_path(path)
+    panel = chooser.unlock_panel
+    panel.password.setText('correct password')
+    panel.submit()
+    assert panel.error.text() == panel.tr(
+        'This database requires a compatible version of UniRCm. '
+        'Open it with the version that last saved it or a newer version.'
+    )
+    assert chooser.vault is None
+    assert path.read_bytes() == before
 
 
 def test_chooser_inline_setup_and_close(qtbot, tmp_path):

@@ -614,11 +614,12 @@ class Terminal(QWidget):
         menu.addAction(action_icon(self, 'Paste'), self.tr('Paste'), self.paste)
         menu.addSeparator()
         if self.session_status.protocol == 'SSH':
-            for title, upload in [('Upload file', True), ('Download file', False)]:
-                action = menu.addAction(action_icon(self, title), self.tr(title),
+            for title, icon, upload in [('Upload file', 'Upload file', True),
+                                        ('File manager', 'Open directory', False)]:
+                action = menu.addAction(action_icon(self, icon), self.tr(title),
                                         lambda checked=False, upload=upload: self.open_file_transfer(upload))
                 action.setEnabled(self.file_transfer_available())
-                action.setToolTip(self.tr(title))
+                action.setToolTip(self.tr(title if upload else 'Browse and download remote files'))
         menu.addAction(self.tr('Terminal appearance…'), self.appearance_requested.emit)
         for action in menu.actions():
             action.setIconVisibleInMenu(True)

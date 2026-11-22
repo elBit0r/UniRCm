@@ -2,8 +2,24 @@
 from PyQt6.QtCore import QCoreApplication, QEvent, Qt
 from PyQt6.QtWidgets import (QComboBox, QDialogButtonBox, QFormLayout, QLabel,
                             QLineEdit, QPushButton, QScrollArea, QTabWidget,
-                            QVBoxLayout, QWidget, QSizePolicy)
+                            QVBoxLayout, QHBoxLayout, QWidget, QSizePolicy)
+from .icons import connection_icon
 from .visuals import title_label
+
+
+def icon_label(widget, title, icon, field):
+    row = QWidget()
+    layout = QHBoxLayout(row)
+    layout.setContentsMargins(0, 0, 0, 0)
+    image = QLabel()
+    image.setPixmap(connection_icon(icon, widget.palette()).pixmap(16, 16))
+    label = QLabel(title)
+    label.setBuddy(field)
+    field.setAccessibleName(title)
+    layout.addWidget(image)
+    layout.addWidget(label)
+    layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+    return row
 
 
 class NamedButtonBox(QDialogButtonBox):

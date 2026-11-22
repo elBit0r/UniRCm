@@ -21,6 +21,14 @@ def action_icon(widget, action):
         'Upload file': ('document-send', 'SP_ArrowUp'),
         'Install public key…': ('dialog-password', 'SP_DialogApplyButton'),
         'Download file': ('document-save', 'SP_ArrowDown'),
+        'Open directory': ('folder-open', 'SP_DirOpenIcon'),
+        'Back': ('go-previous', 'SP_ArrowBack'),
+        'Forward': ('go-next', 'SP_ArrowForward'),
+        'Remote home': ('user-home', 'SP_DirHomeIcon'),
+        'Filesystem root': ('drive-harddisk', 'SP_DriveHDIcon'),
+        'Remote folder': ('folder', 'SP_DirIcon'),
+        'Remote file': ('text-x-generic', 'SP_FileIcon'),
+        'Refresh': ('view-refresh', 'SP_BrowserReload'),
         'Add': ('list-add', 'SP_FileDialogNewFolder'),
         'Cut': ('edit-cut', 'SP_DialogDiscardButton'),
         'New': ('document-new', 'SP_FileIcon'),
@@ -158,7 +166,7 @@ def ssh_icon(palette):
 
 
 # Bundled Papirus SVGs; see assets/papirus/LICENSE and SOURCES.json.
-from remote_manager.icon_catalog import CONNECTION_ICONS
+from remote_manager.icon_catalog import BUNDLED_ICONS, CONNECTION_ICONS
 
 
 def connection_icon(name, palette):
@@ -166,7 +174,8 @@ def connection_icon(name, palette):
     from PyQt6.QtSvg import QSvgRenderer
     if name not in CONNECTION_ICONS and name != 'folder':
         name = 'terminal'
-    data = (Path(__file__).parent / 'assets' / 'papirus' / f'{name}.svg').read_bytes()
+    collection = 'network' if name in BUNDLED_ICONS else 'papirus'
+    data = (Path(__file__).parent / 'assets' / collection / f'{name}.svg').read_bytes()
     renderer = QSvgRenderer(data)
     icon = QIcon()
     for size in (16, 24, 32, 48, 64):

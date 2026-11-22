@@ -17,7 +17,15 @@ def test_common_credentials_encrypted_roundtrip(qtbot, tmp_path):
     qtbot.addWidget(dialog)
     dialog.fields['name'].setText('Password connection')
     dialog.fields['host'].setText('localhost')
-    dialog.ssh_modes['username'].setCurrentIndex(dialog.ssh_modes['username'].findData('override'))
+    source = dialog.ssh_modes['username']
+    source.options['default'].click()
+    assert source.currentData() == 'default'
+    assert not dialog.fields['username'].isEnabled()
+    source.options['inherit'].click()
+    assert source.currentData() == 'inherit'
+    assert not dialog.fields['username'].isEnabled()
+    source.options['override'].click()
+    assert dialog.fields['username'].isEnabled()
     dialog.credentials.username.setText('tester')
     secret = '  remote-secret-with-spaces  '
     dialog.credentials.password.setText(secret)
