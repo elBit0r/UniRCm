@@ -825,7 +825,6 @@ class MainWindow(QMainWindow):
         self.update_actions()
         profiles = {profile['id']: profile for profile in self.vault.profiles()}
         for terminal in self.all_terminals():
-            index = self.tabs.indexOf(terminal)
             profile = profiles.get(terminal.profile_id)
             if profile is None:
                 continue

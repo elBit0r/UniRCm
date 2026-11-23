@@ -142,7 +142,9 @@ class VaultUnlockPanel(QWidget):
         submit = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
         submit.setText(self.tr('Create database') if self.setup else self.tr('Unlock database'))
         submit.setProperty('unircmText', 'Create database' if self.setup else 'Unlock database')
-        submit.setToolTip(self.tr('Unlock the database with its master password.'))
+        submit.setToolTip(self.tr('Create a database protected by a master password.') if self.setup else
+                          self.tr('Unlock the database with its password and key file.') if key_required else
+                          self.tr('Unlock the database with its master password.'))
         submit.setIcon(action_icon(self, 'Unlock selected'))
         submit.setProperty('primary', True)
         submit.setDefault(False)
@@ -389,7 +391,7 @@ class ProfileDialog(QDialog):
         self.general_form = form
         self.tabs.addTab(general, self.tr('General'))
         self.fields = {}
-        for key, title in [('name', 'Connection name'), ('host', 'Hostname / SSH alias')]:
+        for key in ('name', 'host'):
             self.fields[key] = QLineEdit(self.profile.get(key, ''))
         section(form, 'Connection details')
         form.addRow(icon_label(self, self.tr('Connection name'), 'file-code', self.fields['name']),

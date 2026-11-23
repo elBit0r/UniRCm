@@ -1,5 +1,8 @@
 # Encrypted storage
 
-**SQLCipher only**. Plain `sqlite3` must never be used to persist application configuration or secrets.
+`vault.py` manages SQLCipher configuration, schema migrations and shared
+credentials. `archive.py` manages portable archives, verified backups and
+rekey recovery. `kdf.py` implements Argon2id and optional key-file derivation.
 
-Choose and validate native SQLCipher bindings in M0 before writing database code. Fail closed when SQLCipher is unavailable; do not silently create a plaintext database.
+See [the security notes](../../../docs/security.md) for key file and backup
+requirements.

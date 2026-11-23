@@ -1,5 +1,8 @@
 # Protocol backends
 
-Implement actual backends in milestone order: **SSH → RDP → Telnet → VNC → HTTP/HTTPS**.
+SSH runs OpenSSH in a PTY. Telnet uses telnetlib3. The embedded desktop
+backends use FreeRDP 3 for RDP and an experimental RFB viewer for VNC.
+All protocols use credentials resolved by the encrypted vault.
 
-No protocol engine is implemented in this scaffold. Define interfaces based on the M0 feasibility findings; don't create simulated connection success states.
+See [the project specification](../../../PROJECT.md#protocols) for scope and
+transport requirements.

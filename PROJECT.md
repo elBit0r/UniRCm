@@ -75,9 +75,9 @@ for the current module layout.
   transactions. Preserve access to existing vaults across upgrades. Provide
   integrity checks for maintenance.
 - Only minimal non-secret pre-unlock preferences may live outside the vault,
-  such as language, theme, window geometry and vault paths. A portable
-  `.uni` archive may expose its public description. Connection details and
-  private metadata stay encrypted.
+  such as language, theme, window geometry and vault paths. Public `.uni`
+  metadata includes the archive description, KDF settings and key file
+  requirement when enabled. Connection details and private metadata stay encrypted.
 
 ## Vault and credentials
 
@@ -87,9 +87,9 @@ for the current module layout.
 - Locking disconnects sessions, closes database handles and clears accessible
   credentials. Support manual lock and configurable inactivity lock. Shutdown
   also cleans up sessions and database handles.
-- Changing the master password requires the old password and SQLCipher rekeying.
-  Verify the new password, rejection of the old password and recovery if
-  publication fails. A forgotten password has no bypass.
+- Changing vault protection requires the current password and any required
+  key file. Rekey an encrypted staging copy, verify the new credentials and
+  rejection of the old credentials, and preserve recovery if publication fails.
 - Support shared, inherited and per-connection credentials, SSH identity paths
   and private-key passphrases. Prefer keys and the SSH agent where available.
   Revealing or copying a stored password requires deliberate user action.
@@ -100,19 +100,20 @@ for the current module layout.
 - Install the corresponding public key into the active SSH account's
   `~/.ssh/authorized_keys` through the authenticated session. Confirm the
   destination and fingerprint first, and preserve existing authorizations.
-- Before changing the schema version, master password or archive KDF, save and
-  verify an encrypted backup beside the database. Abort the change if backup
-  verification fails. Restore to a separate file using the master password
-  valid when the backup was created and its key file if required. Keep archive
-  publication consistent after committed changes.
+- Before changing the schema version, master password, key file or archive
+  KDF, save and verify an encrypted backup beside the database. Abort the
+  change if verification fails. Restore to a separate file using the master
+  password and any key file required when the backup was created. Keep
+  archive publication consistent after committed changes.
 - Portable archives can require an optional key file alongside the master
   password. Combine the password KDF output and the SHA-256 file digest with
-  HKDF. Store only the key file requirement in public metadata. Generate key
+  HKDF. Store only the requirement flag as key file metadata. Generate key
   files with 32 random bytes and mode `0600`. Adding, removing or replacing a
   key file uses the verified backup and encrypted-staging rekey workflow.
 - New portable archives default to Argon2id. PBKDF2 remains selectable for new
-  archives that require compatibility. The legacy archive KDF upgrade changes
-  PBKDF2 from 256,000 to 512,000 iterations.
+  archives. Legacy portable archives upgrade from 256,000 to 512,000 PBKDF2
+  iterations on first unlock. Standalone legacy `.db` files retain their
+  password-only format.
 - If JSON import/export is added, version the format and validate sizes,
   structure, protocols and references. Exclude credentials and secrets from
   plaintext exports and warn that exported connection metadata is readable.
@@ -149,10 +150,11 @@ explicit login mode and a warning.
 
 ### VNC
 
-The intended workflow includes an embedded remote framebuffer, authentication,
-keyboard and mouse, view-only mode, scaling, fullscreen and clipboard where
-supported. Flag unencrypted transport. If a local bridge is used, bind it to
-loopback, restrict access and stop it with the session.
+The experimental embedded viewer uses RFB 3.8 and classic VNC password
+authentication via LibVNCClient. Support raw framebuffers, remote resize,
+scaling, keyboard and mouse input and view-only mode. Warn about unencrypted
+transport. TLS, fullscreen, clipboard and additional framebuffer encodings
+are deferred.
 
 ### HTTP/HTTPS
 

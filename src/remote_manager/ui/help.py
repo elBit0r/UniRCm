@@ -1,4 +1,4 @@
-"""Built-in user guide for the available SSH/Telnet workflows."""
+"""Built-in user guide for connections and vaults."""
 from html import escape
 
 from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser, QVBoxLayout
@@ -15,8 +15,8 @@ class HelpDialog(QDialog):
         self.browser.setOpenExternalLinks(False)
         sections = [
             ('Connections', [
-                'Use File > New connection to create an SSH or Telnet connection. Select an existing connection and use Edit to change, move, duplicate or delete it.',
-                'Double-click a connection or use Session > Connect to open its terminal. Each connection uses an independent tab.']),
+                'Use File > New connection to create an SSH, Telnet, RDP or experimental VNC connection. Select a saved connection to edit, move, duplicate or delete it.',
+                'Double-click a connection or use Session > Connect to open it in a tab or an available workspace pane.']),
             ('Groups and ordering', [
                 'File > New group creates a group at the root; when a group or one of its connections is selected, New subgroup creates a subgroup there.',
                 'Right-click the tree for group properties and Order. Drag above or below an item to reorder it, or onto a group to move it inside. Ctrl+Up/Down reorders only while the tree has focus.',
@@ -31,9 +31,9 @@ class HelpDialog(QDialog):
                 'Username prompt and Password prompt accept literal text such as login: and password:. Matching ignores letter case. Leave blank for automatic detection; each field is sent once and retries remain manual.']),
             ('Database and settings', [
                 'Changes are saved automatically to the encrypted database. File > Open database switches databases; File > New database creates a separate archive.',
-                'Edit > Credentials manages shared credentials. Edit > Settings selects English/Italian, inactivity lock, archive description and master-password change. The archive description is public.',
-                'File > Lock disconnects all sessions and requires the master password again. Exit asks for confirmation when sessions are active. A forgotten master password cannot be recovered.',
-                'To back up a database, copy its .uni file elsewhere. Open that copy with Open database when needed.'])]
+                'Edit > Credentials manages shared credentials. In Edit > Settings, use Change vault protection to change the password or manage a key file for a .uni archive. The archive description is public.',
+                'File > Lock disconnects sessions. To unlock again, enter the master password and select the key file if required. Losing either required credential prevents access.',
+                'UniRCm saves an encrypted backup before changing the schema or vault protection. Use Restore encrypted backup on the unlock screen to save a separate copy with the password and any key file used for that backup.'])]
         blocks = ['<h1>UniRCm</h1>']
         for heading, paragraphs in sections:
             blocks.append(f'<h2>{escape(self.tr(heading))}</h2>')

@@ -1,14 +1,14 @@
 # UniRCm
 
-UniRCm (Uni Remote Connection Manager) is a desktop app for system administrators who use SSH, Telnet, and remote desktops. Open a Linux server shell, connect to a legacy switch, and use a Windows desktop over RDP from the same app.
+UniRCm (Uni Remote Connection Manager) is a desktop app for system administrators who use SSH, Telnet and remote desktops. Open a Linux server shell, connect to a legacy switch, and use a Windows desktop over RDP from the same app.
 
 ## What you can do
 
-- Open SSH and Telnet terminals and RDP desktops in tabs. The Debian and Ubuntu packages include the FreeRDP 3 bridge.
+- Open SSH and Telnet terminals and embedded RDP desktops in tabs. The Debian and Ubuntu packages include the FreeRDP 3 bridge. Experimental VNC supports RFB 3.8 with classic password authentication and requires LibVNCClient.
 - Save connections in folders and reuse credentials across profiles. UniRCm stores settings and saved credentials in a SQLCipher database protected by a master password.
 - Browse remote directories and transfer files from an SSH session that's already open.
 
-Telnet sends credentials and session data without encryption. Use SSH when the device supports it.
+Telnet and classic VNC use unencrypted transport. Use SSH where available or tunnel VNC over SSH.
 
 ## Screenshots
 
@@ -30,7 +30,7 @@ Once you're connected, right-click inside the SSH terminal and choose **File man
 
 ## Run from source
 
-On Linux, open a terminal in the repository folder. You'll need a graphical desktop, Python 3.11 or later, and the OpenSSH client.
+On Linux, open a terminal in the repository folder. You'll need a graphical desktop, Python 3.11 or later, the OpenSSH client and the Argon2 runtime library (`libargon2-1` on Debian and Ubuntu).
 
 ```sh
 python3 -m venv .venv
@@ -46,6 +46,11 @@ To add, replace or remove one later, open **Database settings → Change vault
 protection**. Keep a separate copy of each key file you need. If you lose a
 required file, you lose access to the archive and any backup that requires it.
 
+UniRCm saves verified encrypted backups beside the database before schema
+upgrades and changes to the password or key file. Use **Restore encrypted
+backup** on the unlock screen to restore a separate copy. Use the password
+and any key file that were valid when the backup was made.
+
 To enable RDP, install a C compiler, `pkg-config`, and the FreeRDP 3 and WinPR 3 development libraries. With the virtual environment active, run:
 
 ```sh
@@ -56,7 +61,7 @@ See the [installation and packaging guide](docs/installation.md) for development
 
 ## Project status
 
-UniRCm is in development on Linux. FreeBSD is a target and still needs testing. VNC is experimental. A future version may support HTTPS for device and server admin pages.
+UniRCm is developed on Linux. See [platform compatibility](docs/compatibility.md) for tested environments and remaining gaps.
 
 ## License
 

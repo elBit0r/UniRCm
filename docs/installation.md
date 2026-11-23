@@ -35,8 +35,8 @@ sudo apt install python3-pip python3-setuptools python3-wheel dpkg-dev binutils 
 
 | Build environment | Target flag | Example amd64 output |
 | --- | --- | --- |
-| Debian 13 with Python 3.13 | `--target debian13` | `dist/unircm_0.2.0-1+debian13_amd64.deb` |
-| Ubuntu 26.04 LTS with Python 3.14 | `--target ubuntu26.04` | `dist/unircm_0.2.0-1+ubuntu26.04_amd64.deb` |
+| Debian 13 with Python 3.13 | `--target debian13` | `dist/unircm_VERSION-1+debian13_amd64.deb` |
+| Ubuntu 26.04 LTS with Python 3.14 | `--target ubuntu26.04` | `dist/unircm_VERSION-1+ubuntu26.04_amd64.deb` |
 
 ```sh
 /usr/bin/python3 scripts/build_deb.py --target debian13
