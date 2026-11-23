@@ -104,3 +104,6 @@ current features.
   `aafire` output from 1.16 s to 0.67 s with identical screen and cursor state.
   Verified return to the shell after Ctrl+C on `unirc` using a copy of the
   encrypted test archive. All 37 terminal screen and selection tests passed.
+- **0.2.4 packages.** Built Debian 13 and Ubuntu 26.04 amd64 packages.
+  APT upgrade simulation, Qt offscreen startup, FreeRDP bridge initialization,
+  and encrypted archive backup and restore passed in both build environments.
