@@ -420,7 +420,7 @@ Select key file	Seleziona il file chiave
 Clear	Cancella
 Choose the file used alongside your master password.	Scegli il file da usare insieme alla password principale.
 Save a new 32-byte random key file.	Salva un nuovo file chiave di 32 byte casuali.
-Clear the selected key file.	Rimuovi il file chiave selezionato dal campo.
+Clear the selection and forget the saved key file path.	Cancella la selezione e dimentica il percorso salvato del file chiave.
 Choose a new filename. Existing key files cannot be overwritten.	Scegli un nuovo nome. I file chiave esistenti possono solo essere selezionati.
 Unable to generate the key file. Check file access.	Impossibile generare il file chiave. Controlla i permessi di accesso.
 If you lose a required key file, you cannot unlock the database.	Se perdi un file chiave obbligatorio, perderai l’accesso al database.

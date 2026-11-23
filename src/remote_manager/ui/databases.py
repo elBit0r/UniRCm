@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTreeWidget,
                             QLabel, QMessageBox, QWidget, QStackedWidget, QDialogButtonBox, QHeaderView)
 from .dialogs import VaultUnlockPanel
 from .icons import action_icon
+from .key_file import remember_key_file
 from .visuals import brand_header, title_label, style_surface
 from remote_manager.storage.archive import metadata
 
@@ -14,7 +15,7 @@ class DatabaseChooser(QDialog):
     def __init__(self, legacy_path, parent=None, excluded_path=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr('Open database'))
-        self.resize(880, 520)
+        self.resize(880, 620)
         style_surface(self)
         self.excluded_path = Path(excluded_path).resolve() if excluded_path else None
         self.vault = None
@@ -113,6 +114,9 @@ class DatabaseChooser(QDialog):
     def forget(self):
         item = self.tree.currentItem()
         if item:
+            path = Path(item.text(1))
+            if path.suffix.lower() == '.uni':
+                remember_key_file(path, None)
             self.tree.takeTopLevelItem(self.tree.indexOfTopLevelItem(item))
             self.remember()
             self.update_actions()

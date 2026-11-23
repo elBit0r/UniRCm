@@ -1,25 +1,49 @@
 """Shared vault key file picker."""
+from hashlib import sha256
+from os import fsencode
 from pathlib import Path
 
-from PyQt6.QtWidgets import QFileDialog, QHBoxLayout, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtCore import QSettings, Qt, pyqtSignal
+from PyQt6.QtWidgets import (QFileDialog, QHBoxLayout, QLayout, QLineEdit, QMessageBox,
+                             QPushButton, QSizePolicy, QVBoxLayout, QWidget)
 
 from remote_manager.storage.kdf import generate_key_file
 from .icons import action_icon
 
 
+def _key_file_setting(archive_path):
+    archive_id = sha256(fsencode(archive_path.resolve())).hexdigest()
+    return f'databases/keyFiles/{archive_id}'
+
+
+def remembered_key_file(archive_path):
+    return QSettings().value(_key_file_setting(archive_path), '', type=str)
+
+
+def remember_key_file(archive_path, key_file):
+    settings = QSettings()
+    key = _key_file_setting(archive_path)
+    if key_file is None:
+        settings.remove(key)
+    else:
+        settings.setValue(key, str(key_file.absolute()))
+
+
 class KeyFilePicker(QWidget):
+    cleared = pyqtSignal()
+
     def __init__(self, parent=None, *, allow_generate=False, allow_clear=False):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        selection = QHBoxLayout()
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         actions = QHBoxLayout()
-        layout.addLayout(selection)
-        layout.addLayout(actions)
         self.field = QLineEdit()
         self.field.setReadOnly(True)
         self.field.setAccessibleName(self.tr('Key file'))
-        selection.addWidget(self.field, 1)
+        self.field.textChanged.connect(self.field.setToolTip)
+        layout.addWidget(self.field)
+        layout.addLayout(actions)
 
         browse = QPushButton(action_icon(self, 'Open file…'), self.tr('Use existing file…'))
         browse.setToolTip(self.tr('Choose the file used alongside your master password.'))
@@ -29,13 +53,18 @@ class KeyFilePicker(QWidget):
             generate = QPushButton(action_icon(self, 'New'), self.tr('Generate new key file…'))
             generate.setToolTip(self.tr('Save a new 32-byte random key file.'))
             generate.clicked.connect(self.generate)
-            actions.addWidget(generate)
+            layout.addWidget(generate, alignment=Qt.AlignmentFlag.AlignLeft)
         if allow_clear:
             clear = QPushButton(action_icon(self, 'Cancel'), self.tr('Clear'))
-            clear.setToolTip(self.tr('Clear the selected key file.'))
+            clear.setToolTip(self.tr('Clear the selection and forget the saved key file path.'))
             clear.clicked.connect(self.clear)
-            selection.addWidget(clear)
+            clear.clicked.connect(self.cleared.emit)
+            actions.addWidget(clear)
         actions.addStretch()
+        for button in self.findChildren(QPushButton):
+            button.setAutoDefault(False)
+            button.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
+        self.field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
     @property
     def path(self):
@@ -45,7 +74,7 @@ class KeyFilePicker(QWidget):
         self.field.clear()
 
     def browse(self):
-        name, _ = QFileDialog.getOpenFileName(self, self.tr('Select key file'))
+        name, _ = QFileDialog.getOpenFileName(self, self.tr('Select key file'), self.field.text())
         if name:
             self.field.setText(name)
 

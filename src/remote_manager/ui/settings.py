@@ -8,7 +8,7 @@ from remote_manager.storage.vault import BackupError
 
 from .credentials import decorate_buttons
 from .icons import action_icon
-from .key_file import KeyFilePicker
+from .key_file import KeyFilePicker, remember_key_file, remembered_key_file
 from .forms import (NamedButtonBox, polish_dialog, primary_action, section,
                     validated_field, require_fields, field_error)
 
@@ -40,6 +40,7 @@ class ChangePasswordDialog(QDialog):
         if self.is_archive:
             if vault.key_file_required:
                 self.current_key_file = KeyFilePicker(self)
+                self.current_key_file.field.setText(remembered_key_file(vault.archive_path))
                 layout.addRow(self.tr('Current key file'), self.current_key_file)
             self.key_file_action = QComboBox()
             self.key_file_action.addItem(self.tr('Keep current key file') if vault.key_file_required else self.tr('Use password only'), 'keep')
@@ -126,6 +127,9 @@ class ChangePasswordDialog(QDialog):
             else:
                 self.error.setText(self.tr(message) if isinstance(error, ValueError) else self.tr('Unable to change the master password.'))
             return
+        if self.is_archive:
+            key_file = options.get('new_key_file', options.get('key_file'))
+            remember_key_file(self.vault.archive_path, key_file)
         self.accept()
 
 

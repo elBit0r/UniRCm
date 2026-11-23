@@ -6,7 +6,7 @@ from PyQt6.QtGui import QColor, QFont
 from .credentials import CredentialsEditor, CredentialSelector, decorate_buttons
 from .icons import connection_icon, action_icon
 from .icon_picker import IconPicker
-from .key_file import KeyFilePicker
+from .key_file import KeyFilePicker, remember_key_file, remembered_key_file
 from .visuals import brand_header, title_label, style_surface
 from .forms import (NamedButtonBox, polish_dialog, primary_action, section,
                     validated_field, require_fields, icon_label)
@@ -14,7 +14,7 @@ from .ssh_advanced import AdvancedSSHOptions
 from .rdp_options import RdpOptions
 
 from PyQt6.QtWidgets import (QApplication, QButtonGroup, QRadioButton, QFontComboBox, QColorDialog, QTabWidget, QVBoxLayout, QWidget,QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-                            QFormLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QFrame,
+                            QFormLayout, QHBoxLayout, QLabel, QLayout, QLineEdit, QScrollArea, QFrame,
                             QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox)
 
 from remote_manager.storage.archive import ArchiveInUse, ArchiveVault, RecoveryConflict, metadata, restore_backup
@@ -39,20 +39,32 @@ class VaultUnlockPanel(QWidget):
         self.setup = description is not None or not path.exists() or path.stat().st_size == 0
         style_surface(self)
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 12, 0, 12)
-        outer.addStretch()
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        outer.addWidget(scroll)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 12, 0, 12)
+        content_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        content_layout.addStretch()
         card = QFrame()
         card.setMaximumWidth(500)
         card.setObjectName('unlockCard')
         card.setStyleSheet('QFrame#unlockCard { background: palette(base); border: 1px solid palette(mid); border-radius: 8px; }')
-        outer.addWidget(card, 0, Qt.AlignmentFlag.AlignHCenter)
-        outer.addStretch()
-        layout = QFormLayout(card)
+        card_row = QHBoxLayout()
+        card_row.addStretch()
+        card_row.addWidget(card, 1)
+        card_row.addStretch()
+        content_layout.addLayout(card_row)
+        content_layout.addStretch()
+        layout = QVBoxLayout(card)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(12)
-        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         heading = title_label(self.tr('Set master password') if self.setup else self.tr('Unlock database'))
-        layout.addRow(heading)
+        layout.addWidget(heading)
         name = description or path.stem
         key_required = False
         if description is None and self.is_archive:
@@ -63,20 +75,24 @@ class VaultUnlockPanel(QWidget):
             except Exception:
                 pass
         self.key_file_required = key_required
-        layout.addRow(title_label(name, size=12))
+        layout.addWidget(title_label(name, size=12))
         destination = QLabel(str(path))
         destination.setTextFormat(Qt.TextFormat.PlainText)
         destination.setWordWrap(True)
         destination.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addRow(destination)
+        layout.addWidget(destination)
         hint = QLabel(self.tr('Protects all saved connection profiles. Password recovery is unavailable.'))
         hint.setWordWrap(True)
-        layout.addRow(hint)
+        layout.addWidget(hint)
         self.password = QLineEdit()
         self.confirmation = QLineEdit()
         for field in (self.password, self.confirmation):
             field.setEchoMode(QLineEdit.EchoMode.Password)
-        layout.addRow(self.tr('Master password'), self.password)
+        form = QFormLayout()
+        form.setSpacing(12)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        layout.addLayout(form)
+        form.addRow(self.tr('Master password'), self.password)
         if self.setup:
             strength_row = QWidget()
             strength_layout = QHBoxLayout(strength_row)
@@ -90,53 +106,55 @@ class VaultUnlockPanel(QWidget):
             strength_layout.addWidget(self.password_strength, 1)
             strength_layout.addWidget(self.strength_label)
             strength_row.setToolTip(self.tr('Estimates strength from password length and character variety.'))
-            layout.addRow(self.tr('Password strength'), strength_row)
+            form.addRow(self.tr('Password strength'), strength_row)
             self.password.textChanged.connect(self.update_password_strength)
             self.update_password_strength('')
-            layout.addRow(self.tr('Confirm password'), self.confirmation)
+            form.addRow(self.tr('Confirm password'), self.confirmation)
             if self.is_archive:
                 self.kdf = QComboBox()
                 self.kdf.addItem('Argon2id', 'argon2id')
                 self.kdf.addItem('PBKDF2', 'pbkdf2')
                 self.kdf.setToolTip(self.tr('Argon2id uses both memory and computation to slow offline password guessing.'))
-                layout.addRow(self.tr('Key derivation'), self.kdf)
+                form.addRow(self.tr('Key derivation'), self.kdf)
                 self.kdf_iterations = QSpinBox()
                 self.kdf_iterations.setRange(DEFAULT_KDF_ITERATIONS, MAX_KDF_ITERATIONS)
                 self.kdf_iterations.setValue(DEFAULT_KDF_ITERATIONS)
                 self.kdf_iterations.setSingleStep(128_000)
                 self.kdf_iterations.setGroupSeparatorShown(True)
                 self.kdf_iterations.setToolTip(self.tr('Higher values slow down both unlocking and offline password guessing.'))
-                layout.addRow(self.tr('Key derivation iterations'), self.kdf_iterations)
+                form.addRow(self.tr('Key derivation iterations'), self.kdf_iterations)
                 self.kdf.currentIndexChanged.connect(
                     lambda: self.kdf_iterations.setEnabled(self.kdf.currentData() == 'pbkdf2'))
                 self.kdf_iterations.setEnabled(False)
         self.key_file = None
         if self.is_archive:
-            self.key_file = KeyFilePicker(self, allow_generate=self.setup, allow_clear=True)
+            self.key_file = KeyFilePicker(card, allow_generate=self.setup, allow_clear=True)
+            if key_required:
+                self.key_file.field.setText(remembered_key_file(path))
+                self.key_file.cleared.connect(lambda: remember_key_file(path, None))
             label = self.tr('Key file (required)') if key_required else self.tr('Key file (optional)')
-            layout.addRow(QLabel(label))
-            layout.addRow(self.key_file)
+            layout.addWidget(QLabel(label))
+            layout.addWidget(self.key_file)
             if self.setup or key_required:
                 warning = QLabel(self.tr('If you lose a required key file, you cannot unlock the database.'))
                 warning.setWordWrap(True)
-                layout.addRow(warning)
+                layout.addWidget(warning)
         self.show_password = QCheckBox(self.tr('Show password'))
         self.show_password.toggled.connect(self.toggle_password)
-        layout.addRow(self.show_password)
+        layout.addWidget(self.show_password)
         self.error = QLabel()
         self.error.setWordWrap(True)
-        self.error.setMinimumHeight(self.error.fontMetrics().lineSpacing() * 3 + 4)
         self.error.setTextFormat(Qt.TextFormat.PlainText)
         self.error.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.error.setAccessibleName(self.tr('Unlock error'))
-        layout.addRow(self.error)
+        layout.addWidget(self.error)
         if not self.setup:
             self.restore_button = QPushButton(action_icon(self, 'Copy'), self.tr('Restore encrypted backup…'))
             self.restore_button.setToolTip(
                 self.tr('Verify a backup with the password and any key file used when it was created.')
                 if self.is_archive else self.tr('Verify a backup using its master password and save it as a separate database.'))
             self.restore_button.clicked.connect(self.restore)
-            layout.addRow(self.restore_button)
+            layout.addWidget(self.restore_button)
         self.buttons = NamedButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         decorate_buttons(self.buttons)
         submit = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
@@ -151,11 +169,12 @@ class VaultUnlockPanel(QWidget):
         # Explicit Return handling also works when embedded in QMainWindow.
         for button in self.buttons.buttons():
             button.setAutoDefault(False)
-        layout.addRow(self.buttons)
+        layout.addWidget(self.buttons)
         self.buttons.accepted.connect(self.submit)
         self.buttons.rejected.connect(self.cancelled.emit)
         self.password.returnPressed.connect(self.submit)
         self.confirmation.returnPressed.connect(self.submit)
+        scroll.setWidget(content)
 
     def update_password_strength(self, password):
         distinct = len({char for char in password.casefold()
@@ -278,12 +297,15 @@ class VaultUnlockPanel(QWidget):
             return
         finally:
             QApplication.restoreOverrideCursor()
+        if self.is_archive:
+            remember_key_file(vault.archive_path, self.key_file.path if vault.key_file_required else None)
         self.clear()
         self.unlocked.emit(vault)
 
 
 def unlock_vault(path, parent=None, description=None):
     dialog = QDialog(parent)
+    dialog.resize(560, 620)
     panel = VaultUnlockPanel(path, dialog, description)
     dialog.setWindowTitle(dialog.tr('Set master password') if panel.setup else dialog.tr('Unlock database'))
     layout = QVBoxLayout(dialog)

@@ -75,7 +75,8 @@ for the current module layout.
   transactions. Preserve access to existing vaults across upgrades. Provide
   integrity checks for maintenance.
 - Only minimal non-secret pre-unlock preferences may live outside the vault,
-  such as language, theme, window geometry and vault paths. Public `.uni`
+  such as language, theme, window geometry, vault paths and a remembered
+  key file path per vault on the local machine. Public `.uni`
   metadata includes the archive description, KDF settings and key file
   requirement when enabled. Connection details and private metadata stay encrypted.
 

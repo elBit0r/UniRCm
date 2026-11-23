@@ -34,6 +34,9 @@ current features.
   encrypted backups and restore to a separate file. Key-file coverage includes
   required and incorrect files, password-only compatibility, rekey and
   recovery before and after archive publication.
+- **Unlock UI.** Verified key file controls and the password checkbox stay
+  separate in the scrollable Linux desktop chooser. Verified per-database
+  path prefill, clearing and removal with an encrypted archive.
 - **SSH and SFTP.** Real loopback OpenSSH checks covered concurrent sessions,
   authentication, imported keys, forwarding, ProxyJump, reconnect and file
   transfers with cancellation. The file manager was verified against OpenSSH.

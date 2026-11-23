@@ -100,11 +100,34 @@ def test_password_dialog_and_settings(qtbot, tmp_path):
 
 
 def test_vault_key_file_ui(qtbot, tmp_path, monkeypatch):
-    from PyQt6.QtWidgets import QFileDialog, QPushButton
+    from PyQt6.QtCore import QSettings
+    from PyQt6.QtWidgets import QFileDialog, QPushButton, QScrollArea
+    from remote_manager.ui import databases, key_file as picker
     from remote_manager.ui.dialogs import VaultUnlockPanel
 
+    def settings():
+        return QSettings(str(tmp_path / 'preferences.ini'), QSettings.Format.IniFormat)
+
+    monkeypatch.setattr(picker, 'QSettings', settings)
+    monkeypatch.setattr(databases, 'QSettings', settings)
     path = tmp_path / 'work.uni'
     vault = ArchiveVault(path, 'master', 'Work')
+    vault.close()
+    chooser = databases.DatabaseChooser(path)
+    qtbot.addWidget(chooser)
+    chooser.resize(chooser.width(), 420)
+    chooser.show()
+    chooser.open_path(path)
+    panel = chooser.unlock_panel
+    assert not panel.key_file_required
+    qtbot.waitUntil(lambda: panel.findChild(QScrollArea).verticalScrollBar().maximum() > 0)
+    for control in [panel.key_file.field, *panel.key_file.findChildren(QPushButton)]:
+        assert control.height() >= control.sizeHint().height()
+        assert control.mapToGlobal(control.rect().bottomLeft()).y() < panel.show_password.mapToGlobal(
+            panel.show_password.rect().topLeft()).y()
+    chooser.close()
+
+    vault = ArchiveVault(path, 'master')
     dialog = ChangePasswordDialog(vault)
     qtbot.addWidget(dialog)
     dialog.show()
@@ -124,14 +147,40 @@ def test_vault_key_file_ui(qtbot, tmp_path, monkeypatch):
 
     panel = VaultUnlockPanel(path)
     qtbot.addWidget(panel)
+    panel.show()
+    for control in [panel.key_file.field, *panel.key_file.findChildren(QPushButton)]:
+        assert control.height() >= control.sizeHint().height()
+    assert panel.key_file.path == key_file
+    next(button for button in panel.key_file.findChildren(QPushButton)
+         if button.text() == 'Clear').click()
+    assert not picker.remembered_key_file(path)
     panel.password.setText('master')
     panel.submit()
     assert panel.error.text() == 'Select the required key file.'
     monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args, **kwargs: (str(key_file), ''))
     panel.key_file.browse()
+    panel.password.setText('incorrect')
+    panel.submit()
+    assert not picker.remembered_key_file(path)
+    panel.password.setText('master')
     with qtbot.waitSignal(panel.unlocked) as unlocked:
         panel.submit()
     assert not panel.key_file.path
+    unlocked.args[0].close()
+    reopened = VaultUnlockPanel(path)
+    qtbot.addWidget(reopened)
+    assert reopened.key_file.path == key_file
+    reopened.password.setText('master')
+    with qtbot.waitSignal(reopened.unlocked) as unlocked:
+        reopened.submit()
+    dialog = ChangePasswordDialog(unlocked.args[0])
+    qtbot.addWidget(dialog)
+    assert dialog.current_key_file.path == key_file
+    dialog.fields['current'].setText('master')
+    dialog.key_file_action.setCurrentIndex(dialog.key_file_action.findData('remove'))
+    dialog.save()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert not picker.remembered_key_file(path)
     unlocked.args[0].close()
 
 
