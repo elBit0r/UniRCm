@@ -58,3 +58,7 @@ current features.
   verified both checksums. In isolated environments, APT simulation, Qt
   startup, native FreeRDP context creation and Argon2id key-file backup
   and restore passed.
+- **0.2.3 packages.** Built Debian 13 and Ubuntu 26.04 amd64 packages and
+  verified SHA-256 checksums, APT install simulation, Qt startup, the native
+  FreeRDP bridge and encrypted archive backup and restore. Passed 14 targeted
+  package and security settings tests.
