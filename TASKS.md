@@ -51,3 +51,7 @@ current features.
 - **Pre-release review.** Passed 47 targeted Linux tests across vault, VNC,
   the Qt UI and workspace sessions. Checked the built-in help in English
   and Italian.
+- **0.2.2 packages.** Built Debian 13 and Ubuntu 26.04 amd64 packages and
+  verified both checksums. In isolated environments, APT simulation, Qt
+  startup, native FreeRDP context creation and Argon2id key-file backup
+  and restore passed.
