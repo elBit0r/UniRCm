@@ -2,10 +2,15 @@ import socket
 import struct
 import threading
 
-from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer
 from PyQt6.QtGui import QKeyEvent, QWheelEvent
 
+from PyQt6.QtWidgets import QDialog
+
 from remote_manager.protocols.vnc import VncSession, challenge_response
+from remote_manager.storage.vault import Vault
+from remote_manager.ui.credentials import ConnectionAuthenticationDialog
+from remote_manager.ui.main_window import MainWindow
 
 
 def test_vnc_des_vector():
@@ -14,7 +19,7 @@ def test_vnc_des_vector():
     assert challenge_response(bytes(range(16)), 'passwordextra') == challenge_response(bytes(range(16)), 'password')
 
 
-def test_rfb_frame_input_and_shutdown(qtbot):
+def test_rfb_frame_input_and_shutdown(qtbot, tmp_path, monkeypatch):
     """Wire-level fixture, not a real desktop server interoperability test."""
     listener = socket.socket()
     listener.bind(('127.0.0.1', 0))
@@ -64,11 +69,32 @@ def test_rfb_frame_input_and_shutdown(qtbot):
 
     thread = threading.Thread(target=server, daemon=True)
     thread.start()
-    session = VncSession(dict(protocol='vnc', host='127.0.0.1', port=listener.getsockname()[1], password='password'))
-    qtbot.addWidget(session)
+    path = tmp_path / 'vnc.db'
+    vault = Vault(path, 'master')
+    hook_output = tmp_path / 'local-commands'
+    profile_id = vault.save(dict(name='Desktop', protocol='vnc', host='127.0.0.1',
+                                 port=listener.getsockname()[1], username='', identity_file='',
+                                 authentication='prompt_password', password='saved-password',
+                                 before_connect_command=f'printf before > "{hook_output}"',
+                                 after_disconnect_command=f'sleep 0.1; printf after >> "{hook_output}"'))
+    window = MainWindow(vault, path)
+    qtbot.addWidget(window)
+
+    def enter_password(dialog):
+        def submit():
+            assert tuple(dialog.inputs) == ('password',)
+            dialog.inputs['password'].setText('password')
+            dialog.connect_button.click()
+
+        QTimer.singleShot(0, submit)
+        return QDialog.exec(dialog)
+
+    monkeypatch.setattr(ConnectionAuthenticationDialog, 'exec', enter_password)
+    session = window.open_profile(vault.profiles(profile_id)[0])
     try:
         qtbot.waitUntil(lambda: session.canvas.image.width() == 3)
         assert session.session_status.state == 'connected'
+        assert hook_output.read_text() == 'before'
         assert session.canvas.image.pixelColor(0, 0).red() == 255
         assert session.canvas.image.pixelColor(1, 0).green() == 255
         session.canvas.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier, 'a'))
@@ -90,10 +116,13 @@ def test_rfb_frame_input_and_shutdown(qtbot):
         session.canvas.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_B, Qt.KeyboardModifier.NoModifier, 'b'))
         assert not session.canvas.pressed
     finally:
-        session.stop()
+        window.close_tab(0, confirm=False)
         thread.join(5)
     assert not errors
-    assert not session.is_running()
+    assert window.tabs.count() == 0
+    assert vault.profiles(profile_id)[0]['password'] == 'saved-password'
+    qtbot.waitUntil(lambda: hook_output.read_text() == 'beforeafter')
+    window.close()
 
 
 def test_no_unauthenticated_fallback(qtbot):

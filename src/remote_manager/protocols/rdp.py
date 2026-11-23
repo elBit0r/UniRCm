@@ -7,8 +7,9 @@ import uuid
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRect, QEvent, QTimer, QMimeData
 from PyQt6.QtGui import QImage, QPainter, QCursor, QPixmap
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QMessageBox, QInputDialog, QLineEdit, QHBoxLayout, QPushButton, QApplication
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QMessageBox, QHBoxLayout, QPushButton, QApplication
 
+from remote_manager.connection_commands import ConnectionCommands
 from remote_manager.session import SessionStatus
 from remote_manager.rdp_options import effective_options, native_flags, desktop_size
 from remote_manager.ui.icons import action_icon
@@ -459,11 +460,6 @@ class RdpSession(QWidget):
     def __init__(self, profile, parent=None):
         lib = load_bridge()
         super().__init__(parent)
-        if not profile.get('password'):
-            password, accepted = QInputDialog.getText(self, self.tr('RDP authentication'), self.tr('Password:'), QLineEdit.EchoMode.Password)
-            if not accepted:
-                raise ValueError(self.tr('RDP authentication cancelled.'))
-            profile = dict(profile, password=password)
         self.rdp_options = effective_options(profile.get('rdp_options', {}))
         self.clipboard_origin = uuid.uuid4().hex.encode()
         self.detached = False
@@ -514,7 +510,12 @@ class RdpSession(QWidget):
         self.resize_timer.setInterval(350)
         self.resize_timer.timeout.connect(self.request_resize)
         self.view.resized.connect(self.resize_timer.start)
-        QTimer.singleShot(0, self.start_connection)
+        self.connection_commands = ConnectionCommands(self, profile, self.result.setText)
+        QTimer.singleShot(0, self.start_with_commands)
+
+    def start_with_commands(self):
+        if not self.worker.cancel.is_set():
+            self.connection_commands.start(self.start_connection)
 
     def start_connection(self):
         if self.worker.cancel.is_set():
@@ -669,9 +670,10 @@ class RdpSession(QWidget):
         self.options = options
 
     def is_running(self):
-        return self.worker.isRunning()
+        return self.connection_commands.starting or self.worker.isRunning()
 
     def stop(self):
+        self.connection_commands.stop()
         self.resize_timer.stop()
         self.view.release_inputs()
         self.worker.stop()
@@ -685,4 +687,5 @@ class RdpSession(QWidget):
             self.cert_box.reject()
         # Native connect is cancellable; join before the tab/vault can be destroyed.
         self.worker.wait()
+        self.worker.credentials = None
         self.session_status.finish(intentional=True)

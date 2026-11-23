@@ -1,6 +1,7 @@
 """Protocol-independent username/password editor."""
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QWidget, QFormLayout, QLineEdit, QCheckBox, QButtonGroup, QGridLayout, QRadioButton
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import (QWidget, QFormLayout, QLineEdit, QCheckBox, QComboBox,
+                             QLabel, QDialog, QDialogButtonBox)
 
 from .icons import action_icon, connection_icon
 from .visuals import title_label
@@ -47,60 +48,37 @@ class CredentialSelector(QWidget):
 
     def __init__(self, vault, source='local', credential_id=None, group=False, parent=None):
         super().__init__(parent)
-        from PyQt6.QtWidgets import QComboBox, QLabel
-        self.vault = vault
-        self.group = group
         self.form = QFormLayout(self)
         self.form.setContentsMargins(0, 0, 0, 0)
-        choices = [('Inherit from parent' if group else 'Inherit from group', 'inherit'),
-                   ('Shared credential', 'shared'), ('No shared credential', 'none')]
+        choices = [('Inherit from parent' if group else 'Inherit from group', 'inherit', 'folder'),
+                   ('Shared credential', 'shared', 'users'),
+                   ('No shared credential' if group else 'No saved credential', 'none', 'terminal')]
         if not group:
-            choices.insert(0, ('Connection credentials', 'local'))
-        if group:
-            self.source = QComboBox()
-            for label, value in choices:
-                self.source.addItem(self.tr(label), value)
-            self.source.setCurrentIndex(max(0, self.source.findData(source)))
-            source_widget = self.source
-            self.source.currentIndexChanged.connect(self.source_changed.emit)
-        else:
-            source_widget = QWidget()
-            layout = QGridLayout(source_widget)
-            layout.setContentsMargins(0, 0, 0, 0)
-            self.source_buttons = QButtonGroup(self)
-            self.source_options = {}
-            icons = {'local': 'user', 'shared': 'users', 'inherit': 'folder', 'none': 'terminal'}
-            for index, (label, value) in enumerate(choices):
-                button = QRadioButton(self.tr(label))
-                button.setIcon(connection_icon(icons[value], self.palette()))
-                layout.addWidget(button, index // 2, index % 2)
-                self.source_buttons.addButton(button)
-                self.source_options[value] = button
-            self.source_options.get(source, self.source_options['local']).setChecked(True)
-            self.source_buttons.buttonToggled.connect(self.source_toggled)
+            choices.insert(0, ('Connection credentials', 'local', 'user'))
+        self.source = QComboBox()
+        for label, value, icon in choices:
+            self.source.addItem(connection_icon(icon, self.palette()), self.tr(label), value)
+        self.source.setCurrentIndex(max(0, self.source.findData(source)))
+        self.source.currentIndexChanged.connect(self.source_changed.emit)
         self.reference = QComboBox()
         self.reference.addItem(self.tr('Select credential…'), None)
-        for credential in vault.shared_credentials() if vault else ():
+        self.shared = {credential['id']: credential for credential in vault.shared_credentials()} if vault else {}
+        for credential in self.shared.values():
             self.reference.addItem(f"{credential['name']} ({credential['username']})", credential['id'])
         self.reference.setCurrentIndex(max(0, self.reference.findData(credential_id)))
         self.note = QLabel()
+        self.note.setTextFormat(Qt.TextFormat.PlainText)
         self.note.setWordWrap(True)
         self.note.setProperty('effectiveValue', True)
-        self.form.addRow(self.tr('Credential source'), source_widget)
+        self.form.addRow(self.tr('Credential source'), self.source)
         self.reference_row = validated_field(self, self.reference)
         self.form.addRow(self.tr('Shared credential'), self.reference_row)
         self.form.addRow(self.note)
         self.source_changed.connect(self.update_state)
         self.update_state()
 
-    def source_toggled(self, button, checked):
-        if checked:
-            self.source_changed.emit()
-
     def selected_source(self):
-        if self.group:
-            return self.source.currentData()
-        return next(value for value, button in self.source_options.items() if button.isChecked())
+        return self.source.currentData()
 
     def update_state(self, *_):
         self.form.setRowVisible(self.reference_row, self.selected_source() == 'shared')
@@ -111,8 +89,7 @@ class CredentialSelector(QWidget):
         from remote_manager.storage.vault import resolve_ssh
         result = resolve_ssh({'folder_id': folder_id, 'ssh_modes': {'credential_id': 'inherit'}}, folders)
         reference = result.get('credential_id')
-        credential = next((item for item in self.vault.shared_credentials()
-                           if item['id'] == reference), None) if self.vault and reference else None
+        credential = self.shared.get(reference)
         origin = ''
         by_id = {folder['id']: folder for folder in folders}
         ancestor = folder_id
@@ -127,6 +104,7 @@ class CredentialSelector(QWidget):
                 origin = ' — ' + self.tr('Inherited from %1').replace('%1', ' / '.join(names))
                 break
             ancestor = folder.get('parent_id')
+        self.inherited_credential = credential
         self.note.setText(self.tr('Inherited credential: ') + (credential['name'] if credential else self.tr('None')) + origin)
         self.note.setVisible(self.selected_source() == 'inherit')
 
@@ -149,6 +127,113 @@ def decorate_buttons(buttons):
         fallback = QStyle.StandardPixmap.SP_DialogSaveButton if standard == buttons.StandardButton.Save else QStyle.StandardPixmap.SP_DialogOkButton if accepted else QStyle.StandardPixmap.SP_DialogCancelButton
         button.setIcon(QIcon.fromTheme(theme, button.style().standardIcon(fallback)))
         button.setToolTip(button.text().replace('&', ''))
+
+
+class ConnectionAuthenticationDialog(QDialog):
+    def __init__(self, profile, fields, parent):
+        super().__init__(parent)
+        self.setWindowTitle(self.tr('Connection authentication'))
+        form = QFormLayout(self)
+        target = QLabel()
+        target.setTextFormat(Qt.TextFormat.PlainText)
+        target.setText(self.tr('Connect to {host} on port {port}').format(
+            host=profile['host'], port=profile['port']))
+        form.addRow(target)
+        if profile.get('protocol') == 'telnet':
+            warning = QLabel(self.tr('Telnet sends credentials without encryption.'))
+            warning.setWordWrap(True)
+            form.addRow(warning)
+        self.inputs = {}
+        protocol = profile.get('protocol', 'ssh')
+        password_only = protocol == 'vnc' or (
+            protocol == 'telnet' and profile.get('telnet_options', {}).get('login_mode') == 'password')
+        for key, label in (('username', self.tr('Username')), ('password', self.tr('Password'))):
+            if key in fields:
+                field = QLineEdit()
+                if key == 'password':
+                    field.setEchoMode(QLineEdit.EchoMode.Password)
+                form.addRow(label, field)
+                self.inputs[key] = field
+                field.textChanged.connect(self.update_connect)
+            elif key == 'username' and profile.get('username') and not password_only:
+                username = QLabel()
+                username.setTextFormat(Qt.TextFormat.PlainText)
+                username.setText(profile['username'])
+                form.addRow(label, username)
+        buttons = NamedButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        primary_action(buttons, 'Connect')
+        cancel = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        cancel.setText(self.tr('Cancel'))
+        cancel.setProperty('unircmText', 'Cancel')
+        decorate_buttons(buttons)
+        self.connect_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.connect_button.setIcon(action_icon(self, 'Connect'))
+        self.connect_button.setToolTip(self.tr('Start the connection.'))
+        cancel.setToolTip(self.tr('Close this dialog without connecting.'))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+        next(iter(self.inputs.values())).setFocus()
+        self.update_connect()
+
+    def values(self):
+        values = {key: field.text() for key, field in self.inputs.items()}
+        if 'username' in values:
+            values['username'] = values['username'].strip()
+        return values
+
+    def update_connect(self):
+        values = self.values()
+        username = values.get('username', 'user')
+        self.connect_button.setEnabled(
+            bool(username.split('\\', 1)[-1].strip())
+            and all(value and not any(char in value for char in '\r\n\x00') for value in values.values()))
+
+
+def prepare_connection_credentials(profile, parent):
+    protocol = profile.get('protocol', 'ssh')
+    mode = profile.get('authentication')
+    if protocol == 'rdp' and mode is None:
+        mode = profile.get('rdp_options', {}).get('authentication', 'configured')
+    ask_password = mode in ('prompt_password', 'prompt_both')
+    ask_username = mode == 'prompt_both'
+    username = profile.get('username', '')
+    password = profile.get('password', '')
+    if protocol == 'telnet':
+        login = profile.get('telnet_options', {}).get('login_mode', 'manual')
+        if login == 'manual':
+            return profile
+    else:
+        login = None
+
+    fields = []
+    username_required = protocol in ('ssh', 'rdp') or login == 'username_password'
+    if protocol == 'ssh' and not ask_username:
+        # Preserve the OpenSSH username for legacy and explicitly configured profiles.
+        username_required = mode is not None and (
+            ask_password or profile.get('ssh_modes', {}).get('username') != 'default')
+    if protocol == 'rdp':
+        username = username.split('\\', 1)[-1].strip()
+    if username_required and (ask_username or not username):
+        fields.append('username')
+    if protocol == 'ssh':
+        # OpenSSH prompts after host-key verification and only if it needs a password.
+        if ask_password:
+            profile = dict(profile, password='')
+    elif ask_password or not password:
+        fields.append('password')
+
+    if not fields:
+        return profile
+    dialog = ConnectionAuthenticationDialog(profile, fields, parent)
+    try:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            return dict(profile, **dialog.values())
+        return None
+    finally:
+        for field in dialog.inputs.values():
+            field.clear()
+        dialog.deleteLater()
 
 
 class CredentialManager:

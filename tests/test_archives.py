@@ -284,6 +284,9 @@ def test_schema_backup_happens_before_migration(tmp_path, monkeypatch):
     vault.set_inactivity_minutes(7)
     with vault.connection as connection:
         connection.execute('ALTER TABLE profiles DROP COLUMN ssh_reconnect_delay')
+        connection.execute('ALTER TABLE profiles DROP COLUMN authentication')
+        connection.execute('ALTER TABLE profiles DROP COLUMN before_connect_command')
+        connection.execute('ALTER TABLE profiles DROP COLUMN after_disconnect_command')
         connection.execute('PRAGMA user_version = 17')
     vault.close()
     before = path.read_bytes()
@@ -297,7 +300,7 @@ def test_schema_backup_happens_before_migration(tmp_path, monkeypatch):
     assert path.read_bytes() == before
 
     vault = ArchiveVault(path, 'master')
-    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 18
+    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 22
     assert vault.inactivity_minutes() == 7
     vault.close()
     backup, = tmp_path.glob('*.backup-*-schema-17-schema.uni')

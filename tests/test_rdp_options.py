@@ -22,6 +22,7 @@ def test_editor_roundtrip_encrypted_options(qtbot, tmp_path):
     controls['color_depth'].setCurrentIndex(controls['color_depth'].findData(16))
     controls['connection_speed'].setCurrentIndex(controls['connection_speed'].findData(2))
     controls['display'].setCurrentIndex(controls['display'].findData('detached'))
+    editor.authentication.setCurrentIndex(editor.authentication.findData('prompt_password'))
     controls['compression'].setChecked(False)
     controls['admin_session'].setChecked(True)
     controls['clipboard'].setChecked(True)
@@ -37,11 +38,13 @@ def test_editor_roundtrip_encrypted_options(qtbot, tmp_path):
     assert b'admin_session' not in path.read_bytes()
     vault = Vault(path, 'master')
     saved = vault.profiles(pid)[0]
+    assert saved['authentication'] == 'prompt_password'
     assert saved['rdp_options'] == expected
     assert vault.effective_profile(saved)['rdp_options'] == expected
     assert vault.profiles(vault.copy_profile(pid, None))[0]['rdp_options'] == expected
     reopened = ProfileDialog(saved)
     qtbot.addWidget(reopened)
+    assert reopened.authentication.currentData() == 'prompt_password'
     assert reopened.rdp_options.options() == expected
     vault.close()
     assert desktop_size(expected, 800, 600) == (1600, 900)
@@ -59,6 +62,9 @@ def test_v15_options_migration_preserves_domain_and_credentials(tmp_path):
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN rdp_options')
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN ssh_reconnect_delay')
     vault.connection.execute('DROP TABLE ssh_private_keys')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN authentication')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN before_connect_command')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN after_disconnect_command')
     vault.connection.execute('PRAGMA user_version=15')
     vault.connection.commit()
     vault.close()
@@ -72,7 +78,7 @@ def test_v15_options_migration_preserves_domain_and_credentials(tmp_path):
 
 @pytest.mark.parametrize('options', [{'timeout': 0}, {'width': 9000}, {'height': True},
     {'color_depth': 8}, {'connection_speed': 0}, {'display': 'external'},
-    {'compression': 'yes'}, {'ignore_certificate': True}])
+    {'compression': 'yes'}, {'ignore_certificate': True}, {'authentication': 'invalid'}])
 def test_invalid_options_rejected(options):
     with pytest.raises(ValueError):
         effective_options(options)

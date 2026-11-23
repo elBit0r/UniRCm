@@ -30,6 +30,18 @@ current features.
 
 ## Recorded verification
 
+- **SSH Unicode.** A real session to `172.16.10.213` in the Linux embedded
+  terminal displayed the pre-authentication banner and the full weather line.
+  An offscreen Qt check verified color emoji rendering.
+
+- **Quick Connect.** Linux Qt checks covered the toolbar, protocol default
+  ports, the View toggle, encrypted visibility persistence and vault locking.
+  The controls stay left-aligned at fixed widths when the window grows.
+  A real OpenSSH loopback connection verified sign-in without saving a profile.
+- **Toolbar.** Linux Qt checks covered large, compact and hidden modes,
+  tooltips in compact mode, Italian labels and restoration from the encrypted vault.
+  The Connect action uses a green plug, gold pins and a blue socket in the menu
+  and toolbar.
 - **Vault.** Verified Argon2id defaults, the legacy PBKDF2 upgrade, automatic
   encrypted backups and restore to a separate file. Key-file coverage includes
   required and incorrect files, password-only compatibility, rekey and
@@ -43,6 +55,12 @@ current features.
 - **RDP.** Linux Wayland verified login and text clipboard with Windows Server
   2008 R2. Local checks covered certificate rejection. A live Ubuntu session
   verified Dynamic Display Control resize and clean disconnect.
+  Local Qt tests verified credential prompts, cancellation on reconnect, and
+  encrypted persistence of the authentication mode without saving prompt input.
+- **Shared connection authentication.** Edit Connection now configures saved
+  credentials and connection-time prompts for SSH, Telnet, RDP and VNC.
+  Linux checks covered SQLCipher, the RDP prompt, loopback OpenSSH key
+  authentication, Telnet login and VNC challenge-response.
 - **Telnet and VNC.** Local TCP peers verified Telnet negotiation and login.
   VNC has wire-fixture checks for authentication, framebuffer updates and
   input, including resize and scrolling.
@@ -62,3 +80,27 @@ current features.
   verified SHA-256 checksums, APT install simulation, Qt startup, the native
   FreeRDP bridge and encrypted archive backup and restore. Passed 14 targeted
   package and security settings tests.
+- **PTY output.** Removed the fixed read delay and redundant repaints. Local
+  shell benchmark with 96,000 bytes of terminal output improved from 1.16 s
+  to 0.33 s median over five runs. All 28 screen and selection tests passed.
+- **Local connection commands.** Added single-line commands before connecting
+  and after disconnecting, stored in SQLCipher. Verified both commands with
+  loopback SSH, Telnet and a VNC protocol fixture, including closing the VNC
+  tab. A refused RDP connection ran only the before command. A successful RDP
+  session still needs a live-server check.
+- **Before-connection command errors.** Added Continue, Cancel and Retry to
+  the error dialog. Verified that all three choices control transport startup.
+- **SSH startup commands.** Added per-profile multiline commands stored in
+  SQLCipher. Verified execution in a real loopback SSH shell, continued
+  interactive use, and no command input after failed authentication.
+- **tmux over SSH.** Fixed a terminal crash on DEC private cursor position
+  queries and suppressed the incorrect primary reply to secondary device
+  attributes queries. Verified tmux 3.6 startup, first command and return
+  to the shell over loopback SSH.
+- **Midnight Commander borders.** Enabled DEC line drawing in UTF-8 terminal
+  streams. Verified panel borders and return to the shell over loopback SSH
+  with Midnight Commander running under the C locale.
+- **SSH animation output.** Reduced processing time for 500 kB of captured
+  `aafire` output from 1.16 s to 0.67 s with identical screen and cursor state.
+  Verified return to the shell after Ctrl+C on `unirc` using a copy of the
+  encrypted test archive. All 37 terminal screen and selection tests passed.

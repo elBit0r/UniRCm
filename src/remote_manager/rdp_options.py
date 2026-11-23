@@ -3,14 +3,15 @@ DEFAULTS = dict(connection_speed=7, color_depth=32, resolution='automatic', widt
                 height=720, display='workspace', timeout=15, compression=True,
                 wallpaper=False, font_smoothing=True, themes=True,
                 full_window_drag=False, menu_animations=False, admin_session=False,
-                smooth_scaling=True, clipboard=False)
+                smooth_scaling=True, clipboard=False, authentication='configured')
 
 
 def validate_options(options):
     if not isinstance(options, dict) or options.keys() - DEFAULTS.keys():
         raise ValueError('Invalid RDP options.')
     choices = dict(connection_speed=range(1, 8), color_depth=(15, 16, 24, 32),
-                   resolution=('automatic', 'fixed'), display=('workspace', 'detached'))
+                   resolution=('automatic', 'fixed'), display=('workspace', 'detached'),
+                   authentication=('configured', 'prompt_password', 'prompt_both'))
     for key, value in options.items():
         if key in choices:
             if type(value) is not type(DEFAULTS[key]) or value not in choices[key]:

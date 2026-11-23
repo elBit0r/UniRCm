@@ -32,10 +32,6 @@ def test_menu_structure_shared_actions_and_visibility(qtbot, tmp_path):
     assert all(action.text() and not action.icon().isNull() for action in window.toolbar.actions() if not action.isSeparator())
     assert not window.actions['Close tab'].isEnabled()
     assert not window.actions['Disconnect'].isEnabled()
-    window.actions['Toolbar'].trigger()
-    assert not window.toolbar.isVisible()
-    window.actions['Toolbar'].trigger()
-    assert window.toolbar.isVisible()
     width = window.tabs.width()
     window.actions['Connection tree'].trigger()
     qtbot.waitUntil(lambda: window.tabs.width() > width)
@@ -65,6 +61,84 @@ def test_menu_structure_shared_actions_and_visibility(qtbot, tmp_path):
     assert not window.statusBar().isVisible()
     window.actions['Status bar'].trigger()
     assert window.statusBar().isVisible()
+    window.close()
+
+
+def test_toolbar_modes_and_persistence(qtbot, tmp_path):
+    window = make_window(qtbot, tmp_path)
+    toolbar_menu = next(action.menu() for action in window.menus['View'].actions()
+                        if action.text() == 'Toolbar')
+    large, small, disabled = toolbar_menu.actions()
+    assert [action.text() for action in (large, small, disabled)] == [
+        'Large (icons and text)', 'Small (icons only)', 'Disabled']
+    assert large.isChecked()
+    large_height = window.toolbar.sizeHint().height()
+    small.trigger()
+    assert small.isChecked() and not large.isChecked()
+    assert window.toolbar.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+    assert window.toolbar.sizeHint().height() < large_height
+    assert all(window.toolbar.widgetForAction(action).toolTip()
+               for action in window.toolbar.actions() if not action.isSeparator())
+    popup = window.createPopupMenu()
+    assert popup.actions() == [large, small, disabled]
+    popup.close()
+    disabled.trigger()
+    assert disabled.isChecked() and not small.isChecked()
+    assert window.toolbar.isHidden()
+    window.close()
+
+    window = make_window(qtbot, tmp_path)
+    assert window.toolbar.isHidden()
+    assert window.toolbar_mode_actions['disabled'].isChecked()
+    window.toolbar_mode_actions['large'].trigger()
+    assert window.toolbar.isVisible()
+    assert window.toolbar.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+    window.close()
+
+
+def test_quick_connect_toolbar(qtbot, tmp_path, monkeypatch):
+    window = make_window(qtbot, tmp_path)
+    toolbar = window.quick_connect_toolbar
+    toggle = window.actions['Quick Connect']
+    assert toggle in window.menus['View'].actions()
+    assert toolbar.isVisible() and toggle.isChecked()
+    assert toolbar.geometry().top() > window.toolbar.geometry().bottom()
+    connect = window.quick_connect_action
+    assert connect.text() == 'Connect' and not connect.icon().isNull()
+    controls = (window.quick_host, window.quick_port, window.quick_protocol, toolbar.widgetForAction(connect))
+    geometry = [widget.geometry() for widget in controls]
+    window.resize(window.width() + 300, window.height())
+    qtbot.waitUntil(lambda: toolbar.width() == window.width())
+    assert [widget.geometry() for widget in controls] == geometry
+    assert not connect.isEnabled()
+    assert window.quick_port.value() == 22
+    for protocol, port in (('RDP', 3389), ('VNC', 5900), ('Telnet', 23), ('SSH', 22)):
+        window.quick_protocol.setCurrentText(protocol)
+        assert window.quick_port.value() == port
+    warnings = []
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *args: warnings.append(args[-1]))
+    profiles = []
+    monkeypatch.setattr(window, 'open_profile', profiles.append)
+    window.quick_host.setText('-invalid')
+    connect.trigger()
+    assert warnings and not profiles
+    window.quick_host.setText('  example.test  ')
+    window.quick_port.setValue(2222)
+    qtbot.keyClick(window.quick_host, Qt.Key.Key_Return)
+    assert profiles == [dict(name='example.test', host='example.test', port=2222, protocol='ssh',
+                             username='', identity_file='', credential_source='none',
+                             authentication='prompt_both')]
+    window.toolbar_mode_actions['disabled'].trigger()
+    assert toolbar.isVisible()
+    toggle.trigger()
+    assert toolbar.isHidden()
+    window.close()
+
+    window = make_window(qtbot, tmp_path)
+    assert window.quick_connect_toolbar.isHidden()
+    assert not window.actions['Quick Connect'].isChecked()
+    window.actions['Quick Connect'].trigger()
+    assert window.quick_connect_toolbar.isVisible()
     window.close()
 
 
@@ -143,24 +217,26 @@ def test_session_menu_real_pty_and_remote_shortcuts(qtbot, tmp_path, monkeypatch
 
 def test_file_new_database_creates_real_archive(qtbot, tmp_path, monkeypatch):
     from PyQt6.QtCore import QSettings, QTimer
-    from PyQt6.QtWidgets import QInputDialog, QFileDialog, QApplication, QLineEdit, QDialogButtonBox
+    from PyQt6.QtWidgets import QInputDialog, QFileDialog, QApplication, QDialogButtonBox
     import remote_manager.ui.databases as databases
     from remote_manager.storage.archive import ArchiveVault
     window = make_window(qtbot, tmp_path)
     original = window.database_path
     window.vault.save(PROFILE)
+    window.toolbar_mode_actions['small'].trigger()
     path = tmp_path / 'new.uni'
     monkeypatch.setattr(databases, 'QSettings', lambda: QSettings(str(tmp_path / 'recent.ini'), QSettings.Format.IniFormat))
     monkeypatch.setattr(QInputDialog, 'getText', lambda *a: ('Menu database', True))
     monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a: (str(path), ''))
     def unlock():
-        dialog = QApplication.activeModalWidget()
-        for field in dialog.findChildren(QLineEdit):
-            field.setText('new-master')
-        dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Ok).click()
+        panel = QApplication.activeModalWidget().unlock_panel
+        panel.password.setText('new-master')
+        panel.confirmation.setText('new-master')
+        panel.buttons.button(QDialogButtonBox.StandardButton.Ok).click()
     QTimer.singleShot(50, unlock)
     window.actions['New database'].trigger()
     assert window.database_path == path
+    assert window.toolbar_mode_actions['large'].isChecked()
     assert window.vault.metadata['description'] == 'Menu database'
     assert window.tree.topLevelItemCount() == 0
     window.close()
@@ -169,6 +245,7 @@ def test_file_new_database_creates_real_archive(qtbot, tmp_path, monkeypatch):
     vault.close()
     vault = Vault(original, 'master')
     assert vault.profiles()[0]['name'] == PROFILE['name']
+    assert vault.toolbar_mode() == 'small'
     vault.close()
 
 
@@ -182,6 +259,9 @@ def test_italian_menus_help_and_shortcut_modifiers(qtbot, tmp_path):
     try:
         window.show()
         assert [action.text() for action in window.menuBar().actions()] == ['File', 'Modifica', 'Sessione', 'Visualizza', 'Aiuto']
+        assert [action.text() for action in window.toolbar_mode_actions.values()] == [
+            'Grande (icone e testo)', 'Piccola (solo icone)', 'Disabilitato']
+        assert window.actions['Quick Connect'].text() == 'Connessione rapida'
         shortcut = window.actions['New connection'].shortcut().toString(QKeySequence.SequenceFormat.NativeText)
         assert shortcut == 'Ctrl+N'
         exit_shortcut = window.actions['Exit'].shortcut().toString(QKeySequence.SequenceFormat.NativeText)

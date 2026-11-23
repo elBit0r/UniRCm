@@ -13,7 +13,7 @@ from .forms import (NamedButtonBox, polish_dialog, primary_action, section,
 from .ssh_advanced import AdvancedSSHOptions
 from .rdp_options import RdpOptions
 
-from PyQt6.QtWidgets import (QApplication, QButtonGroup, QRadioButton, QFontComboBox, QColorDialog, QTabWidget, QVBoxLayout, QWidget,QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+from PyQt6.QtWidgets import (QApplication, QFontComboBox, QColorDialog, QTabWidget, QVBoxLayout, QWidget,QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                             QFormLayout, QHBoxLayout, QLabel, QLayout, QLineEdit, QScrollArea, QFrame,
                             QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox)
 
@@ -469,6 +469,19 @@ class ProfileDialog(QDialog):
         form.addRow(self.auto_reconnect)
         form.addRow(icon_label(self, self.tr('Reconnect delay'), 'gauge', self.reconnect_delay), self.reconnect_delay)
         section(form, 'Authentication')
+        self.authentication = QComboBox()
+        for label, value in (('Use saved credentials', 'configured'),
+                             ('Ask for password when connecting', 'prompt_password'),
+                             ('Ask for username and password when connecting', 'prompt_both')):
+            self.authentication.addItem(self.tr(label), value)
+        authentication = self.profile.get('authentication')
+        if authentication is None and self.profile.get('protocol') == 'rdp':
+            authentication = self.profile.get('rdp_options', {}).get('authentication')
+        self.authentication.setCurrentIndex(max(0, self.authentication.findData(authentication)))
+        self.authentication.setToolTip(self.tr(
+            'Missing credentials are requested when connecting. Credentials entered in the prompt are used only for that connection attempt.'))
+        form.addRow(self.tr('Sign-in'), self.authentication)
+        self.authentication.currentIndexChanged.connect(self.update_credential_controls)
         form.addRow(self.credentials)
         self.rdp_domain = QLineEdit(self.profile.get('rdp_domain', ''))
         self.rdp_domain.setMaxLength(255)
@@ -476,7 +489,9 @@ class ProfileDialog(QDialog):
         form.addRow(self.tr('Domain'), self.rdp_domain)
         self.credential_selector = CredentialSelector(getattr(parent, 'vault', None), self.profile.get('credential_source', 'local'), self.profile.get('credential_id'), parent=self)
         form.insertRow(form.getWidgetPosition(self.credentials)[0], self.credential_selector)
-        self.credential_selector.source_changed.connect(self.update_effective_values)
+        self.credential_selector.inherited(self.folder.currentData(), self.folders)
+        self.credential_selector.source_changed.connect(self.update_username_source)
+        self.credential_selector.reference.currentIndexChanged.connect(self.update_credential_controls)
         self.fields['username'] = self.credentials.username
         self.identity = QLineEdit(self.profile.get('identity_file', ''))
         self.imported_key_name = self.profile.get('imported_key_name')
@@ -516,8 +531,23 @@ class ProfileDialog(QDialog):
                                   ('connect_timeout', 'Timeout source', self.connect_timeout)]:
             selected = self.profile.get('ssh_modes', {}).get(key, 'override' if profile else 'inherit')
             if key == 'username':
-                mode = UsernameSource(selected)
-                changed = mode.changed
+                source = self.credential_selector.selected_source()
+                if not profile:
+                    selected = 'override'
+                elif 'authentication' not in self.profile:
+                    if source == 'shared' or (source == 'inherit' and (
+                            selected == 'inherit' or self.credential_selector.inherited_credential)):
+                        selected = 'credential'
+                    elif self.profile.get('protocol', 'ssh') == 'ssh' and selected == 'override' and not self.profile.get('username'):
+                        selected = 'default'
+                mode = QComboBox()
+                for title, value in (('Use this username', 'override'),
+                                     ('Use credential username', 'credential'),
+                                     ('Inherit from group', 'inherit'),
+                                     ('Let OpenSSH choose', 'default')):
+                    mode.addItem(self.tr(title), value)
+                mode.setCurrentIndex(max(0, mode.findData(selected)))
+                changed = mode.currentIndexChanged
             else:
                 mode = source_combo(selected)
                 changed = mode.currentIndexChanged
@@ -531,9 +561,10 @@ class ProfileDialog(QDialog):
             field.setEnabled(mode.currentData() == 'override')
             self.ssh_modes[key] = mode
             value_widget = identity_widget if key == 'identity_file' else field
-            row, note = inheritance_row(mode, value_widget, stacked=key == 'username')
+            row, note = inheritance_row(mode, value_widget)
             if key == 'username':
                 self.username_row = row
+                note.setTextFormat(Qt.TextFormat.PlainText)
                 self.credentials.form.insertRow(0, icon_label(self, self.tr('Username'), 'user', field), row)
             else:
                 icon = 'key-round' if key == 'identity_file' else 'gauge'
@@ -617,6 +648,29 @@ class ProfileDialog(QDialog):
         terminal_layout = QVBoxLayout(terminal_page)
         terminal_layout.addWidget(self.terminal_options)
         self.tabs.addTab(terminal_page, self.tr('Terminal'))
+        commands_page = QWidget()
+        commands_form = QFormLayout(commands_page)
+        self.tabs.addTab(commands_page, self.tr('Commands'))
+        self.command_fields = {}
+        for key, title, description in (
+            ('before_connect_command', 'Before connection',
+             'Run a local command or script before connecting. If it fails, choose whether to continue, cancel, or retry.'),
+            ('after_disconnect_command', 'After disconnection',
+             'Run a local command or script once the established connection closes.'),
+        ):
+            section(commands_form, title)
+            field = QLineEdit(self.profile.get(key, ''))
+            field.setPlaceholderText(self.tr('Local command or script path'))
+            field.setToolTip(self.tr(description))
+            commands_form.addRow(self.tr('Local command'), field)
+            self.command_fields[key] = field
+        self.ssh_startup_commands = QPlainTextEdit(self.profile.get('ssh_startup_commands', ''))
+        self.ssh_startup_commands.setPlaceholderText(self.tr('Enter commands for the remote shell, one per line'))
+        self.ssh_startup_commands.setToolTip(self.tr('Sends these commands to the interactive SSH shell after login, including when reconnecting.'))
+        commands_form.addRow(self.tr('After SSH login'), self.ssh_startup_commands)
+        self.commands_form = commands_form
+        self.commands_form.setRowVisible(self.ssh_startup_commands, self.protocol.currentData() == 'ssh')
+
         self.appearance_modes = {}
         for key, label, field, target in [('tab_color', 'Tab color source', self.color_button, visual),
                                            ('terminal_options', 'Terminal appearance source', self.terminal_options, terminal_layout)]:
@@ -675,6 +729,8 @@ class ProfileDialog(QDialog):
         self.tabs.setTabEnabled(self.tabs.indexOf(self.telnet_page), self.protocol.currentData() == 'telnet')
         self.tabs.setTabEnabled(self.tabs.indexOf(self.advanced_page), is_ssh)
         self.tabs.setTabEnabled(self.tabs.indexOf(self.rdp_options), protocol == 'rdp')
+        if hasattr(self, 'commands_form'):
+            self.commands_form.setRowVisible(self.ssh_startup_commands, is_ssh)
         self.update_credential_controls()
 
     def update_general_port(self, value):
@@ -702,10 +758,20 @@ class ProfileDialog(QDialog):
             mode = modes[key].currentData()
             field.setVisible(mode == 'override')
             note.setVisible(mode != 'override')
-            note.setText(inherited_description(key, mode, self.folder.currentData(), self.folders))
+            if key != 'username':
+                note.setText(inherited_description(key, mode, self.folder.currentData(), self.folders))
         self.update_credential_controls()
 
-    def update_credential_controls(self):
+    def update_username_source(self):
+        source = self.credential_selector.selected_source()
+        username = self.ssh_modes['username']
+        if source in ('shared', 'inherit'):
+            username.setCurrentIndex(username.findData('credential'))
+        elif username.currentData() == 'credential':
+            username.setCurrentIndex(username.findData('override'))
+        self.update_effective_values()
+
+    def update_credential_controls(self, *_):
         if not hasattr(self, 'appearance_modes'):
             return
         protocol = self.protocol.currentData()
@@ -717,33 +783,56 @@ class ProfileDialog(QDialog):
         self.general_form.setRowVisible(self.telnet_login, protocol == 'telnet')
         self.credential_selector.setEnabled(not manual_telnet)
         self.credential_selector.setToolTip(self.tr('Manual Telnet login does not use stored credentials.') if manual_telnet else '')
-        username_used = protocol != 'telnet' or self.telnet_login.currentData() == 'username_password'
-        password_used = protocol in ('ssh', 'rdp') or (protocol == 'telnet' and self.telnet_login.currentData() != 'manual')
+        username_used = protocol in ('ssh', 'rdp') or (
+            protocol == 'telnet' and self.telnet_login.currentData() == 'username_password')
+        password_used = not manual_telnet
+        self.authentication.setEnabled(password_used)
+        self.authentication.model().item(self.authentication.findData('prompt_both')).setEnabled(username_used)
+        authentication = self.authentication.currentData()
+        if authentication == 'prompt_both' and password_used and not username_used:
+            self.authentication.setCurrentIndex(self.authentication.findData('prompt_password'))
+            return
+        store_password = local and password_used and authentication == 'configured'
+        edit_username = username_used and authentication != 'prompt_both'
         self.general_form.setRowVisible(self.auto_reconnect, protocol == 'ssh')
         self.general_form.setRowVisible(self.reconnect_delay, protocol == 'ssh')
-        self.general_form.setRowVisible(self.credentials, source in ('local', 'none'))
-        if not (local and password_used):
+        key_passphrase = local and protocol == 'ssh'
+        self.general_form.setRowVisible(self.credentials, edit_username or store_password or key_passphrase)
+        if not store_password:
             self.credentials.show_secrets.setChecked(False)
-        if not (local and protocol == 'ssh'):
+        if not key_passphrase:
             self.credentials.show_key_passphrase.setChecked(False)
-        self.credentials.form.setRowVisible(self.credentials.show_secrets, local and password_used)
-        self.credentials.form.setRowVisible(self.credentials.show_key_passphrase, local and protocol == 'ssh')
-        self.username_row.setEnabled(username_used)
-        self.credentials.username.setEnabled(username_used and self.ssh_modes['username'].currentData() == 'override')
-        self.credentials.password.setEnabled(local and password_used)
-        self.credentials.form.setRowVisible(self.credentials.key_passphrase, protocol == 'ssh')
-        self.credentials.key_passphrase.setEnabled(local and protocol == 'ssh')
-        self.credentials.password.setToolTip(self.tr(
-            'Stored only in the encrypted database. Leave empty to authenticate interactively or with a key/agent.'
-            if password_used else 'Stored passwords are not sent in this mode. Enter the password in the remote client or terminal.'))
-        if protocol == 'rdp':
-            self.credentials.password.setToolTip(self.tr('Stored in the encrypted database and supplied directly to FreeRDP in memory. Leave empty to enter it when connecting.'))
-        if protocol == 'telnet' and password_used:
+        self.credentials.form.setRowVisible(self.username_row, edit_username)
+        self.username_row.setEnabled(edit_username)
+        username_combo = self.ssh_modes['username']
+        username_combo.model().item(username_combo.findData('credential')).setEnabled(source in ('shared', 'inherit'))
+        username_combo.model().item(username_combo.findData('default')).setEnabled(protocol == 'ssh')
+        username_mode = username_combo.currentData()
+        self.credentials.username.setEnabled(edit_username and username_mode == 'override')
+        self.credentials.form.setRowVisible(self.credentials.password, store_password)
+        self.credentials.form.setRowVisible(self.credentials.show_secrets, store_password)
+        self.credentials.password.setEnabled(store_password)
+        self.credentials.form.setRowVisible(self.credentials.key_passphrase, key_passphrase)
+        self.credentials.form.setRowVisible(self.credentials.show_key_passphrase, key_passphrase)
+        self.credentials.key_passphrase.setEnabled(key_passphrase)
+        if protocol == 'telnet':
             self.credentials.password.setToolTip(self.tr('Stored in the encrypted database and sent once at the Telnet password prompt. Telnet transmits it without encryption.'))
+        else:
+            self.credentials.password.setToolTip(self.tr('Stored only in the encrypted database. Leave empty to enter it when connecting.'))
         username_note = self.effective_labels['username'][0]
-        username_mode = self.ssh_modes['username'].currentData()
-        description = inherited_description('username', username_mode, self.folder.currentData(), self.folders)
-        if protocol != 'ssh':
+        description = inherited_description(
+            'username', 'inherit' if username_mode == 'credential' else username_mode,
+            self.folder.currentData(), self.folders)
+        if username_mode == 'credential':
+            selector = self.credential_selector
+            credential = None
+            if source == 'inherit':
+                credential = selector.inherited_credential
+            elif source == 'shared':
+                credential = selector.shared.get(selector.reference.currentData())
+            if credential:
+                description = credential['username'] or self.tr('No username configured')
+        if protocol != 'ssh' or username_mode != 'default':
             description = description.replace(self.tr('OpenSSH configuration / agent'), self.tr('No username configured'))
         username_note.setText(description)
         self.tabs.setTabEnabled(self.tabs.indexOf(self.terminal_page), terminal)
@@ -805,8 +894,11 @@ class ProfileDialog(QDialog):
         profile = {key: field.text().strip() for key, field in self.fields.items()}
         profile.update(self.credentials.values())
         profile['rdp_options'] = self.rdp_options.options()
+        profile['authentication'] = self.authentication.currentData()
         profile['rdp_domain'] = self.rdp_domain.text().strip()
         profile['connect_at_startup'] = self.connect_at_startup.isChecked()
+        profile.update({key: field.text() for key, field in self.command_fields.items()})
+        profile['ssh_startup_commands'] = self.ssh_startup_commands.toPlainText()
         profile['ssh_reconnect_delay'] = (
             self.reconnect_delay.value() if self.protocol.currentData() == 'ssh' and self.auto_reconnect.isChecked() else 0
         )
@@ -1158,36 +1250,6 @@ class GroupDefaultsDialog(QDialog):
         self.accept()
 
 
-class UsernameSource(QWidget):
-    changed = pyqtSignal()
-
-    def __init__(self, selected):
-        super().__init__()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.group = QButtonGroup(self)
-        self.options = {}
-        for value, label, icon in (
-            ('override', 'Use this username', 'user'),
-            ('inherit', 'Inherit from group', 'folder'),
-            ('default', 'Application default', 'terminal'),
-        ):
-            button = QRadioButton(self.tr(label))
-            button.setIcon(connection_icon(icon, self.palette()))
-            self.group.addButton(button)
-            self.options[value] = button
-            layout.addWidget(button)
-        self.options.get(selected, self.options['inherit']).setChecked(True)
-        self.group.buttonToggled.connect(self.selection_changed)
-
-    def selection_changed(self, _button, checked):
-        if checked:
-            self.changed.emit()
-
-    def currentData(self):
-        return next(value for value, button in self.options.items() if button.isChecked())
-
-
 def source_combo(selected, parent=None):
     combo = QComboBox(parent)
     for label, value in [('Override', 'override'), ('Inherit from group', 'inherit'), ('Application default', 'default')]:
@@ -1241,12 +1303,12 @@ class TerminalAppearanceDialog(QDialog):
         self.accept()
 
 
-def inheritance_row(mode, field, *, stacked=False):
+def inheritance_row(mode, field):
     widget = QWidget()
     note = QLabel()
     note.setWordWrap(True)
     note.setProperty('effectiveValue', True)
-    compact = not stacked and (isinstance(field, (QLineEdit, QSpinBox)) or isinstance(field.layout(), QHBoxLayout))
+    compact = isinstance(field, (QLineEdit, QSpinBox)) or isinstance(field.layout(), QHBoxLayout)
     layout = QHBoxLayout(widget) if compact else QVBoxLayout(widget)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(6)

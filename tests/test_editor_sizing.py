@@ -50,3 +50,27 @@ def test_required_field_returns_to_general_without_saving(qtbot, group):
     if not group:
         assert editor.fields['host'].text() == 'preserve.example.org'
     editor.close()
+
+
+def test_single_line_commands_are_saved_for_all_profiles(qtbot):
+    from PyQt6.QtWidgets import QLineEdit
+
+    profile = dict(name='Test', host='localhost')
+    for protocol in ('ssh', 'vnc', 'telnet', 'rdp'):
+        editor = ProfileDialog(dict(profile, protocol=protocol))
+        qtbot.addWidget(editor)
+        assert editor.tabs.isTabEnabled(editor.tabs.count() - 1)
+        before = editor.command_fields['before_connect_command']
+        after = editor.command_fields['after_disconnect_command']
+        assert isinstance(before, QLineEdit)
+        assert isinstance(after, QLineEdit)
+        before.setText('true')
+        after.setText('/tmp/after.sh')
+        assert editor.commands_form.isRowVisible(editor.ssh_startup_commands) == (protocol == 'ssh')
+        if protocol == 'ssh':
+            editor.ssh_startup_commands.setPlainText('pwd\nwhoami')
+        editor.save()
+        assert editor.result() == editor.DialogCode.Accepted
+        assert editor.profile['before_connect_command'] == 'true'
+        assert editor.profile['after_disconnect_command'] == '/tmp/after.sh'
+        assert editor.profile['ssh_startup_commands'] == ('pwd\nwhoami' if protocol == 'ssh' else '')

@@ -5,6 +5,7 @@ from PyQt6.QtNetwork import QHostAddress, QTcpServer
 from PyQt6.QtWidgets import QDialog, QMessageBox
 
 from remote_manager.storage.vault import Vault
+from remote_manager.ui.credentials import ConnectionAuthenticationDialog
 from remote_manager.ui.dialogs import ProfileDialog
 from remote_manager.ui.main_window import MainWindow
 from remote_manager.terminal.ssh import Terminal
@@ -70,14 +71,20 @@ def test_prompt_recognition_one_shot_and_manual():
 
 
 @pytest.mark.parametrize('mode', ['manual', 'password', 'username_password'])
-def test_real_login_modes_and_terminal(qtbot, peer, mode, caplog):
+def test_real_login_modes_and_terminal(qtbot, peer, mode, caplog, tmp_path):
     caplog.set_level(1)  # Library TRACE output must not expose wire data.
-    terminal = Terminal(telnet_profile(peer.port, mode))
+    output = tmp_path / 'local-commands'
+    terminal = Terminal(dict(
+        telnet_profile(peer.port, mode),
+        before_connect_command=f'printf before > "{output}"',
+        after_disconnect_command=f'printf after >> "{output}"',
+    ))
     qtbot.addWidget(terminal)
     terminal.resize(850, 500)
     terminal.show()
     try:
         qtbot.waitUntil(lambda: terminal.session_status.state == 'connected', timeout=4000)
+        assert output.read_text() == 'before'
         qtbot.waitUntil(lambda: b'\xff\xfb\x1f' in peer.received and b'xterm-256color' in peer.received)
         assert terminal.process is None and terminal.askpass is None
         assert terminal.session_status.protocol == 'TELNET'
@@ -111,6 +118,7 @@ def test_real_login_modes_and_terminal(qtbot, peer, mode, caplog):
         qtbot.waitUntil(lambda: b'check\r\n' in peer.received)
         peer.socket.disconnectFromHost()
         qtbot.waitUntil(lambda: not terminal.is_running())
+        qtbot.waitUntil(lambda: output.read_text() == 'beforeafter')
         assert terminal.session_status.state == 'disconnected'
         assert terminal.session_status.exit_code == 0
         assert not any('telnet-secret-marker' in record.getMessage() for record in caplog.records)
@@ -119,7 +127,8 @@ def test_real_login_modes_and_terminal(qtbot, peer, mode, caplog):
         assert not terminal.transport.isRunning()
 
 
-def test_telnet_editor_shared_credentials_reconnect_and_close(qtbot, tmp_path, peer, monkeypatch):
+@pytest.mark.parametrize('authentication', ['configured', 'prompt_password'])
+def test_telnet_editor_shared_credentials_reconnect_and_close(qtbot, tmp_path, peer, monkeypatch, authentication):
     vault = Vault(tmp_path / 'config.db', 'master')
     reference = vault.save_credential('Switch password', '', 'password-only')
     group = vault.save_folder('Switches', defaults={'credential_id': reference, 'port': 2222})
@@ -134,7 +143,21 @@ def test_telnet_editor_shared_credentials_reconnect_and_close(qtbot, tmp_path, p
     assert not editor.tabs.isTabEnabled(1) and editor.tabs.isTabEnabled(editor.tabs.indexOf(editor.telnet_page))
     editor.port.setValue(peer.port)
     editor.telnet_login.setCurrentIndex(editor.telnet_login.findData('password'))
-    editor.credential_selector.source_options['inherit'].setChecked(True)
+    editor.credential_selector.source.setCurrentIndex(editor.credential_selector.source.findData('inherit'))
+    editor.authentication.setCurrentIndex(editor.authentication.findData(authentication))
+    prompted = []
+
+    def enter_password(dialog):
+        def submit():
+            prompted.append(tuple(dialog.inputs))
+            dialog.inputs['password'].setText('one-time-password')
+            dialog.connect_button.click()
+
+        QTimer.singleShot(0, submit)
+        return QDialog.exec(dialog)
+
+    monkeypatch.setattr(ConnectionAuthenticationDialog, 'exec', enter_password)
+
     editor.save()
     assert editor.result() == QDialog.DialogCode.Accepted
     saved = vault.profiles()[0]
@@ -149,7 +172,8 @@ def test_telnet_editor_shared_credentials_reconnect_and_close(qtbot, tmp_path, p
     qtbot.waitUntil(lambda: window.tabs.widget(0).session_status.state == 'connected')
     terminal = window.tabs.widget(0)
     peer.send(b'Password:')
-    qtbot.waitUntil(lambda: b'password-only\r\n' in peer.received)
+    expected = b'one-time-password' if authentication == 'prompt_password' else b'password-only'
+    qtbot.waitUntil(lambda: expected + b'\r\n' in peer.received)
     assert b'operator' not in peer.received
     assert 'TELNET' in window.session_status_label.text()
     assert 'Unencrypted' in window.tabs.tabToolTip(0)
@@ -164,6 +188,7 @@ def test_telnet_editor_shared_credentials_reconnect_and_close(qtbot, tmp_path, p
     assert not active.transport.isRunning()
     assert active.session_status.state == 'disconnected'
     assert b'password-only' not in (tmp_path / 'config.db').read_bytes()
+    assert prompted == ([('password',), ('password',)] if authentication == 'prompt_password' else [])
 
 
 def test_connection_failure_and_cancel(qtbot, peer):
@@ -238,6 +263,9 @@ def test_schema8_upgrade_keeps_shared_references(tmp_path):
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN rdp_domain')
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN ssh_advanced')
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN connect_at_startup')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN authentication')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN before_connect_command')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN after_disconnect_command')
     vault.connection.execute('PRAGMA user_version = 8')
     vault.connection.commit()
     vault.close()
@@ -245,7 +273,7 @@ def test_schema8_upgrade_keeps_shared_references(tmp_path):
     saved = vault.profiles()[0]
     assert saved['telnet_options'] == {}  # Manual login is the upgrade default.
     assert vault.effective_profile(saved)['password'] == 'existing-secret'
-    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 18
+    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 22
     vault.close()
 
 

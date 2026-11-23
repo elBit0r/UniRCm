@@ -391,3 +391,113 @@ print('\\nKEY_HEX='+data.hex(),flush=True)
         assert not terminal.screen.is_alternate
     finally:
         terminal.stop()
+
+
+@pytest.mark.parametrize('quick_connect', [False, True], ids=['saved-profile', 'quick-connect'])
+def test_requested_ssh_username_with_key_authentication(qtbot, tmp_path, ssh_server, monkeypatch, quick_connect):
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtWidgets import QDialog
+    from remote_manager.ui.credentials import ConnectionAuthenticationDialog
+
+    path = tmp_path / 'prompt.db'
+    vault = Vault(path, 'master')
+    window = MainWindow(vault, path)
+    qtbot.addWidget(window)
+    opened = []
+
+    def enter_username(dialog):
+        def submit():
+            opened.append(tuple(dialog.inputs))
+            dialog.inputs['username'].setText(ssh_server['username'])
+            dialog.connect_button.click()
+
+        QTimer.singleShot(0, submit)
+        return QDialog.exec(dialog)
+
+    monkeypatch.setattr(ConnectionAuthenticationDialog, 'exec', enter_username)
+    if quick_connect:
+        # Supply the test identity through OpenSSH, as with a user's SSH configuration.
+        isolated_command = ssh.ssh_command
+        monkeypatch.setattr(ssh, 'ssh_command', lambda profile: isolated_command(
+            dict(profile, identity_file=ssh_server['identity_file'])))
+        window.quick_host.setText(ssh_server['host'])
+        window.quick_port.setValue(ssh_server['port'])
+        window.quick_connect_action.trigger()
+        terminal = window.tabs.currentWidget()
+    else:
+        profile_id = vault.save(dict(ssh_server, username='saved-user', password='saved-password',
+                                     authentication='prompt_both'))
+        terminal = window.open_profile(vault.profiles(profile_id)[0])
+    try:
+        qtbot.waitUntil(lambda: terminal.session_status.state == 'connected', timeout=10000)
+        assert opened == [('username',)]
+        assert terminal.askpass is None
+        if quick_connect:
+            assert terminal.profile_id is None
+            assert not vault.profiles()
+        else:
+            assert vault.profiles(profile_id)[0]['username'] == 'saved-user'
+    finally:
+        window.close_tab(0, confirm=False)
+        window.close()
+
+
+def test_local_commands_run_before_ssh_and_after_disconnection(qtbot, tmp_path, ssh_server):
+    from shlex import quote
+
+    output = tmp_path / 'local commands'
+    target = quote(str(output))
+    terminal = ssh.Terminal(dict(
+        ssh_server,
+        before_connect_command=f'printf before > {target}',
+        after_disconnect_command=f'printf after >> {target}; exit 8',
+    ))
+    qtbot.addWidget(terminal)
+    try:
+        assert terminal.process is None
+        qtbot.waitUntil(lambda: terminal.file_transfer_available(), timeout=10000)
+        qtbot.waitUntil(lambda: terminal.session_status.state == 'connected')
+        assert output.read_text() == 'before'
+        terminal.send(b'exit\r')
+        qtbot.waitUntil(lambda: not terminal.is_running())
+        qtbot.waitUntil(lambda: output.read_text() == 'beforeafter')
+        qtbot.waitUntil(lambda: any('exited with code 8' in line for line in terminal.screen.display))
+    finally:
+        terminal.stop()
+
+
+def test_startup_commands_run_in_authenticated_shell(qtbot, tmp_path, ssh_server):
+    vault = Vault(tmp_path / 'private' / 'connections.db', 'master')
+    commands = "startup_value=UNICODE_è\nprintf '%s\\n' \"$startup_value\""
+    profile_id = vault.save(dict(ssh_server, ssh_startup_commands=commands))
+    profile = vault.profiles(profile_id)[0]
+    vault.close()
+    assert profile['ssh_startup_commands'] == commands
+    terminal = ssh.Terminal(profile)
+    qtbot.addWidget(terminal)
+    try:
+        qtbot.waitUntil(lambda: any(line.strip() == 'UNICODE_è' for line in terminal.screen.display),
+                        timeout=10000)
+        assert terminal.session_status.state == 'connected'
+        terminal.send(b'printf "interactive_%s\\n" "$startup_value"\r')
+        qtbot.waitUntil(lambda: any(line.strip() == 'interactive_UNICODE_è' for line in terminal.screen.display))
+    finally:
+        terminal.stop()
+
+
+def test_startup_commands_are_not_sent_if_authentication_fails(qtbot, ssh_server, monkeypatch):
+    isolated_command = ssh.ssh_command
+    monkeypatch.setattr(ssh, 'ssh_command', lambda profile: [
+        'ssh', '-o', 'BatchMode=yes', *isolated_command(profile)[1:],
+    ])
+    sent = []
+    monkeypatch.setattr(ssh.Terminal, 'send', lambda terminal, data: sent.append(data))
+    terminal = ssh.Terminal(dict(ssh_server, username=ssh_server['username'] + '-invalid',
+                                 ssh_startup_commands='echo hello'))
+    qtbot.addWidget(terminal)
+    try:
+        qtbot.waitUntil(lambda: terminal.session_status.ended_at is not None, timeout=10000)
+        assert terminal.session_status.connected_at is None
+        assert not sent
+    finally:
+        terminal.stop()

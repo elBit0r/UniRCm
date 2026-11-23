@@ -27,7 +27,7 @@ class HelpDialog(QDialog):
                 'Ctrl+Shift+C copies selected text; Ctrl+Shift+V pastes. Hold Shift to select locally when a remote program captures the mouse. Ctrl+mouse wheel changes font size.',
                 'Ctrl+N, Ctrl+O, Ctrl+F and F1 are local shortcuts only while the tree or search field has focus. Ordinary terminal control keys remain available to the remote program.']),
             ('Telnet login', [
-                'Telnet is unencrypted. Manual login sends no stored credentials automatically. In the Telnet tab, explicitly choose password-only or username/password login to send stored credentials at their prompts.',
+                'Telnet is unencrypted. Manual login sends no stored credentials automatically. In General, choose password-only or username/password login to send credentials at the server prompts.',
                 'Username prompt and Password prompt accept literal text such as login: and password:. Matching ignores letter case. Leave blank for automatic detection; each field is sent once and retries remain manual.']),
             ('Database and settings', [
                 'Changes are saved automatically to the encrypted database. File > Open database switches databases; File > New database creates a separate archive.',

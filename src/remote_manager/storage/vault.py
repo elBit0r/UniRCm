@@ -24,7 +24,7 @@ def validate_kdf_iterations(iterations, *, minimum=LEGACY_KDF_ITERATIONS):
         raise ValueError('Invalid key derivation iteration count.')
 
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 22
 MAX_SSH_RECONNECT_DELAY = 600
 
 
@@ -184,6 +184,21 @@ class Vault:
                         f'CHECK(ssh_reconnect_delay BETWEEN 0 AND {MAX_SSH_RECONNECT_DELAY})'
                     )
                     self.connection.execute('PRAGMA user_version = 18')
+                if self.connection.execute('PRAGMA user_version').fetchone()[0] < 19:
+                    self.connection.execute('ALTER TABLE profiles ADD COLUMN authentication TEXT')
+                    self.connection.execute('PRAGMA user_version = 19')
+                if self.connection.execute('PRAGMA user_version').fetchone()[0] < 20:
+                    self.connection.execute("ALTER TABLE profiles ADD COLUMN before_connect_command TEXT NOT NULL DEFAULT ''")
+                    self.connection.execute("ALTER TABLE profiles ADD COLUMN after_connect_command TEXT NOT NULL DEFAULT ''")
+                    self.connection.execute('PRAGMA user_version = 20')
+                if self.connection.execute('PRAGMA user_version').fetchone()[0] < 21:
+                    self.connection.execute("ALTER TABLE profiles RENAME COLUMN after_connect_command TO after_disconnect_command")
+                    self.connection.execute('PRAGMA user_version = 21')
+                if self.connection.execute('PRAGMA user_version').fetchone()[0] < 22:
+                    columns = {row[1] for row in self.connection.execute('PRAGMA table_info(profiles)')}
+                    if 'ssh_startup_commands' not in columns:
+                        self.connection.execute("ALTER TABLE profiles ADD COLUMN ssh_startup_commands TEXT NOT NULL DEFAULT ''")
+                    self.connection.execute('PRAGMA user_version = 22')
         except Exception:
             self.connection.close()
             raise
@@ -349,6 +364,26 @@ class Vault:
         row = self.connection.execute("SELECT value FROM settings WHERE key='language'").fetchone()
         return row[0] if row and row[0] in ('en', 'it') else 'en'
 
+    def toolbar_mode(self):
+        row = self.connection.execute("SELECT value FROM settings WHERE key='toolbar_mode'").fetchone()
+        return row[0] if row and row[0] in ('large', 'small', 'disabled') else 'large'
+
+    def set_toolbar_mode(self, mode):
+        if mode not in ('large', 'small', 'disabled'):
+            raise ValueError('Unsupported toolbar mode.')
+        with self.connection:
+            self.connection.execute("INSERT INTO settings(key,value) VALUES('toolbar_mode',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (mode,))
+
+    def quick_connect_visible(self):
+        row = self.connection.execute("SELECT value FROM settings WHERE key='quick_connect_visible'").fetchone()
+        return not row or row[0] != '0'
+
+    def set_quick_connect_visible(self, visible):
+        with self.connection:
+            self.connection.execute("INSERT INTO settings(key,value) VALUES('quick_connect_visible',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", ('1' if visible else '0',))
+
     def set_language(self, language):
         if language not in ('en', 'it'):
             raise ValueError('Unsupported interface language.')
@@ -495,6 +530,11 @@ class Vault:
                  + (' WHERE id=?' if profile_id is not None else '') + ' ORDER BY name,id')
         profiles = [dict(row) for row in self.connection.execute(query, (profile_id,) if profile_id is not None else ())]
         for profile in profiles:
+            for key in ('before_connect_command', 'after_disconnect_command', 'ssh_startup_commands'):
+                if not profile[key]:
+                    profile.pop(key)
+            if profile['authentication'] is None:
+                profile.pop('authentication')
             if profile['imported_key_name'] is None:
                 profile.pop('imported_key_name')
             credential = self.credential(profile.get('credential_id'))
@@ -616,14 +656,24 @@ class Vault:
         reconnect_delay = profile.get('ssh_reconnect_delay', 0) if profile.get('protocol', 'ssh') == 'ssh' else 0
         if type(reconnect_delay) is not int or not 0 <= reconnect_delay <= MAX_SSH_RECONNECT_DELAY:
             raise ValueError('Invalid SSH reconnect delay.')
-        values += (credential_id, source, json.dumps(telnet_options), int(bool(profile.get('connect_at_startup', False))), json.dumps(profile.get('ssh_advanced', {})), domain, json.dumps(profile.get('rdp_options', {})), reconnect_delay)
+        authentication = profile.get('authentication')
+        if authentication not in (None, 'configured', 'prompt_password', 'prompt_both'):
+            raise ValueError('Invalid authentication mode.')
+        values += (credential_id, source, json.dumps(telnet_options), int(bool(profile.get('connect_at_startup', False))), json.dumps(profile.get('ssh_advanced', {})), domain, json.dumps(profile.get('rdp_options', {})), reconnect_delay, authentication)
+        commands = tuple(profile.get(key, '') for key in ('before_connect_command', 'after_disconnect_command'))
+        if any(not isinstance(command, str) or any(char in command for char in '\r\n\x00') for command in commands):
+            raise ValueError('Enter each local command on a single line.')
+        startup_commands = profile.get('ssh_startup_commands', '')
+        if not isinstance(startup_commands, str) or '\x00' in startup_commands:
+            raise ValueError('Enter valid SSH startup commands.')
+        values += (*commands, startup_commands)
         if source == 'local':
             self.connection.execute('INSERT INTO credentials(id,username,password,key_passphrase) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET username=excluded.username,password=excluded.password,key_passphrase=excluded.key_passphrase',
                                     (credential_id, profile['username'], password, key_passphrase))
         if profile.get('id') is None:
-            return self.connection.execute('INSERT INTO profiles(name,host,port,username,identity_file,folder_id,protocol,icon,tab_color,terminal_options,ssh_modes,connect_timeout,credential_id,credential_source,telnet_options,connect_at_startup,ssh_advanced,rdp_domain,rdp_options,ssh_reconnect_delay) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', values).lastrowid
+            return self.connection.execute('INSERT INTO profiles(name,host,port,username,identity_file,folder_id,protocol,icon,tab_color,terminal_options,ssh_modes,connect_timeout,credential_id,credential_source,telnet_options,connect_at_startup,ssh_advanced,rdp_domain,rdp_options,ssh_reconnect_delay,authentication,before_connect_command,after_disconnect_command,ssh_startup_commands) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', values).lastrowid
         self.connection.execute("DELETE FROM tree_order WHERE kind='profile' AND item_id=? AND EXISTS (SELECT 1 FROM profiles WHERE id=? AND folder_id IS NOT ?)", (profile['id'], profile['id'], profile.get('folder_id')))
-        self.connection.execute('UPDATE profiles SET name=?,host=?,port=?,username=?,identity_file=?,folder_id=?,protocol=?,icon=?,tab_color=?,terminal_options=?,ssh_modes=?,connect_timeout=?,credential_id=?,credential_source=?,telnet_options=?,connect_at_startup=?,ssh_advanced=?,rdp_domain=?,rdp_options=?,ssh_reconnect_delay=? WHERE id=?', values + (profile['id'],))
+        self.connection.execute('UPDATE profiles SET name=?,host=?,port=?,username=?,identity_file=?,folder_id=?,protocol=?,icon=?,tab_color=?,terminal_options=?,ssh_modes=?,connect_timeout=?,credential_id=?,credential_source=?,telnet_options=?,connect_at_startup=?,ssh_advanced=?,rdp_domain=?,rdp_options=?,ssh_reconnect_delay=?,authentication=?,before_connect_command=?,after_disconnect_command=?,ssh_startup_commands=? WHERE id=?', values + (profile['id'],))
         return profile['id']
 
     def copy_profile(self, profile_id, folder_id, anchor=None, after=False):
@@ -697,7 +747,10 @@ class Vault:
             result['key_passphrase'] = ''
             if credential_id:
                 credential = self.require_shared_credential(credential_id)
-                result.update(username=credential['username'], password=credential['password'], key_passphrase=credential['key_passphrase'])
+                result.update(password=credential['password'], key_passphrase=credential['key_passphrase'])
+                username_mode = profile.get('ssh_modes', {}).get('username')
+                if profile.get('authentication') is None or username_mode == 'credential':
+                    result['username'] = credential['username']
         return result
 
     def save_folder(self, name, parent_id=None, folder_id=None, defaults=None, appearance=None):
@@ -762,7 +815,7 @@ def validate_ssh_settings(settings, modes=False):
         if key not in SSH_DEFAULTS:
             raise ValueError('Unsupported SSH property.')
         if modes:
-            if value not in ('inherit', 'override', 'default'):
+            if value not in ('inherit', 'override', 'default') and (key, value) != ('username', 'credential'):
                 raise ValueError('Invalid SSH property mode.')
         elif value is not None:
             if key == 'ssh_advanced':
@@ -795,7 +848,7 @@ def resolve_ssh(profile, folders):
                 result[key] = profile.get(key, default)
             continue
         result[key] = default
-        ancestor = profile.get('folder_id') if mode == 'inherit' else None
+        ancestor = profile.get('folder_id') if mode in ('inherit', 'credential') else None
         visited = set()
         while ancestor is not None:
             if ancestor in visited:

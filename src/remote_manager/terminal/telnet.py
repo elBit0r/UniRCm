@@ -242,5 +242,6 @@ class TelnetTransport(QThread):
         with self._guard:
             if self.loop is not None and self.task is not None:
                 self.loop.call_soon_threadsafe(self.task.cancel)
-        self.wait(1000)
+        joined = self.wait(1000)
         self.login.clear()
+        return joined

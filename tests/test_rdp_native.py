@@ -17,12 +17,17 @@ def bridge():
         pytest.skip('Build the native FreeRDP bridge first')
 
 
-def test_native_connection_failure_and_cleanup(qtbot, bridge):
+def test_native_connection_failure_and_cleanup(qtbot, bridge, tmp_path):
     import socket
     # Bound, non-listening socket makes connection refusal deterministic.
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0))
-        session = RdpSession(dict(host='127.0.0.1', port=listener.getsockname()[1], username='test', password='not-logged'))
+        output = tmp_path / 'local-commands'
+        session = RdpSession(dict(
+            host='127.0.0.1', port=listener.getsockname()[1], username='test', password='not-logged',
+            before_connect_command=f'printf before > "{output}"',
+            after_disconnect_command=f'printf after >> "{output}"',
+        ))
         qtbot.addWidget(session)
         try:
             with qtbot.waitSignal(session.exited, timeout=15000) as result:
@@ -31,6 +36,7 @@ def test_native_connection_failure_and_cleanup(qtbot, bridge):
             qtbot.waitUntil(lambda: not session.is_running())
             assert session.session_status.state == 'error'
             assert 'not-logged' not in session.result.text()
+            assert output.read_text() == 'before'
         finally:
             session.stop()
         assert session.worker.handle is None

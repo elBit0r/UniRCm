@@ -30,7 +30,7 @@ def test_encrypted_v1_migration_preserves_profiles(tmp_path):
     vault.close()
     assert b'private-folder-marker' not in path.read_bytes()
     vault = Vault(path, 'master')
-    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 18
+    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 22
     assert vault.profiles()[0]['folder_id'] == folder
     assert vault.folders()[0]['name'] == 'private-folder-marker'
     assert not vault.connection.execute('PRAGMA foreign_key_check').fetchall()

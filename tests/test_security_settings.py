@@ -321,7 +321,7 @@ def test_italian_interface_preserves_profile_names(qtbot, tmp_path):
         assert window.tree.topLevelItem(0).text(0) == 'Settings'  # User text.
         profile = ProfileDialog(parent=window)
         assert profile.tabs.tabText(0) == 'Generale'
-        assert profile.credential_selector.source_options['local'].text() == 'Credenziali della connessione'
+        assert profile.credential_selector.source.itemText(profile.credential_selector.source.findData('local')) == 'Credenziali della connessione'
         settings = SettingsDialog(vault, window)
         settings.show()
         assert settings.windowTitle() == 'Impostazioni database'
@@ -382,16 +382,18 @@ def test_inline_lock_stops_pty_and_restores_hidden_chrome(qtbot, tmp_path, monke
     window = MainWindow(vault, path)
     qtbot.addWidget(window)
     window.show()
-    window.toolbar.hide()
+    window.toolbar_mode_actions['disabled'].trigger()
     window.statusBar().hide()
     window.open_profile(vault.profiles(pid)[0])
     terminal = window.tabs.currentWidget()
     terminal.send(b'INLINE_LOCK_READY\r')
     qtbot.waitUntil(lambda: any('INLINE_LOCK_READY' in row for row in terminal.screen.display))
     monkeypatch.setattr(window, 'confirm_disconnect', lambda: True)
+    window.quick_host.setText('example.test')
     window.lock_vault()
     assert not terminal.is_running()
     assert window.tabs.count() == 0 and window.vault is None
+    assert window.quick_connect_toolbar.isHidden() and not window.quick_host.text()
     panel = window.unlock_panel
     try:
         set_language('it')
@@ -404,6 +406,7 @@ def test_inline_lock_stops_pty_and_restores_hidden_chrome(qtbot, tmp_path, monke
         assert not panel.password.text()
         assert window.menuBar().isVisible()
         assert not window.toolbar.isVisible() and not window.statusBar().isVisible()
+        assert window.quick_connect_toolbar.isVisible()
         window.lock_vault()
         panel = window.unlock_panel
         panel.password.setText('discard-on-close')

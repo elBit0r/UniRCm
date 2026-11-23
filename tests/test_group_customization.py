@@ -131,13 +131,16 @@ def test_schema11_adds_customization_without_changing_profiles(tmp_path):
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN rdp_domain')
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN ssh_advanced')
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN connect_at_startup')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN authentication')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN before_connect_command')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN after_disconnect_command')
     vault.connection.execute('PRAGMA user_version = 11')
     vault.connection.commit()
     vault.close()
     vault = Vault(path, 'master')
     assert vault.profiles()[0] == profile
     assert vault.tree_positions() == {}
-    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 18
+    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 22
     vault.close()
 
 

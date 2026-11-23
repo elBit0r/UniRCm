@@ -66,11 +66,14 @@ def test_existing_v14_database_migrates(tmp_path):
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN rdp_domain')
     vault.connection.execute('ALTER TABLE profiles DROP COLUMN ssh_reconnect_delay')
     vault.connection.execute('DROP TABLE ssh_private_keys')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN authentication')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN before_connect_command')
+    vault.connection.execute('ALTER TABLE profiles DROP COLUMN after_disconnect_command')
     vault.connection.execute('PRAGMA user_version=14')
     vault.connection.commit()
     vault.close()
     vault = Vault(path, 'master')
-    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 18
+    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 22
     profile = vault.profiles(profile_id)[0]
     assert profile['rdp_domain'] == ''
     assert profile['password'] == 'secret'

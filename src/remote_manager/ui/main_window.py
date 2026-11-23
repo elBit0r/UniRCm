@@ -5,17 +5,19 @@ from PyQt6.sip import isdeleted
 
 from PyQt6.QtCore import Qt, QEvent, QSize, QTimer, pyqtSignal, QPointF
 from PyQt6.QtGui import QAction, QActionGroup, QColor, QKeySequence, QShortcut, QPainter
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QDialog, QLineEdit, QMainWindow, QMessageBox, QSplitter, QSplitterHandle, QStyle, QStyleOptionToolButton, QStylePainter, QWidget, QVBoxLayout,
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QSpinBox, QSplitter, QSplitterHandle, QStyle, QStyleOptionToolButton, QStylePainter, QWidget, QVBoxLayout,
                             QMenu, QInputDialog, QTabWidget, QToolButton, QHBoxLayout, QSizePolicy, QTreeWidget, QTreeWidgetItem, QDialogButtonBox)
 
 from remote_manager import APP_SHORT_NAME, APP_NAME, __version__
+from remote_manager.protocols.validation import validate_profile
 from remote_manager.terminal.public_key import public_key_from_private
 from remote_manager.terminal.ssh import Terminal
+from remote_manager.terminal.telnet import validate_profile as validate_telnet_profile
 from .dialogs import TerminalAppearanceDialog, GroupDefaultsDialog, LocalTerminalProfileDialog, ProfileDialog, VaultUnlockPanel
 from .settings import SettingsDialog
 from .visuals import brand_header, style_surface, contrast_workspace
 from .language import set_language
-from .credentials import CredentialManager
+from .credentials import CredentialManager, prepare_connection_credentials
 from .session_status import SessionStatusLabel
 from .terminal_tabs import TerminalTabs
 from .session_workspace import SessionWorkspace, sessions, active_session
@@ -189,9 +191,6 @@ class MainWindow(QMainWindow):
         toolbar = self.addToolBar(self.tr('Connections'))
         self.toolbar = toolbar
         toolbar.setMovable(False)
-        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        toolbar.setIconSize(QSize(20, 20))
-        toolbar.setStyleSheet('QToolBar { spacing: 4px; padding: 4px; } QToolButton { padding: 5px 7px; }')
         self.actions = {}
         for title, callback in [('New connection', self.new_profile), ('New group', self.new_folder), ('Edit', self.edit_profile),
                                 ('Duplicate', self.duplicate_profile),
@@ -242,6 +241,7 @@ class MainWindow(QMainWindow):
         self.tree.itemSelectionChanged.connect(self.schedule_tree_state)
         self.tree.verticalScrollBar().valueChanged.connect(self.tree_scroll_changed)
         self.add_tree_actions()
+        self.add_quick_connect_toolbar()
         self.add_main_menus()
         self.add_tree_tools(sidebar_layout)
         self.refresh()
@@ -256,10 +256,64 @@ class MainWindow(QMainWindow):
         QApplication.instance().installEventFilter(self)
         QTimer.singleShot(0, self.connect_startup_profiles)
 
-    def connect_startup_profiles(self):
-        if self.vault is None or self._locking:
+    def add_quick_connect_toolbar(self):
+        self.addToolBarBreak()
+        toolbar = self.quick_connect_toolbar = self.addToolBar(self.tr('Quick Connect'))
+        toolbar.setObjectName('quickConnectToolbar')
+        toolbar.setAllowedAreas(Qt.ToolBarArea.TopToolBarArea)
+        toolbar.setMovable(False)
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.quick_host = QLineEdit()
+        self.quick_host.setFixedWidth(self.quick_host.fontMetrics().horizontalAdvance('M' * 25) + 12)
+        self.quick_host.setToolTip(self.tr('Enter a hostname, SSH alias or IP address.'))
+        self.quick_port = QSpinBox()
+        self.quick_port.setRange(1, 65535)
+        self.quick_port.setValue(22)
+        self.quick_protocol = QComboBox()
+        for name, port in (('SSH', 22), ('RDP', 3389), ('VNC', 5900), ('Telnet', 23)):
+            self.quick_protocol.addItem(name, (name.lower(), port))
+        self.quick_protocol.currentIndexChanged.connect(
+            lambda: self.quick_port.setValue(self.quick_protocol.currentData()[1]))
+        for title, widget in ((self.tr('Host:'), self.quick_host), (self.tr('Port'), self.quick_port),
+                              (self.tr('Protocol'), self.quick_protocol)):
+            label = QLabel(title)
+            label.setBuddy(widget)
+            widget.setAccessibleName(title)
+            toolbar.addWidget(label)
+            toolbar.addWidget(widget)
+        connect = self.quick_connect_action = toolbar.addAction(action_icon(self, 'Connect'), self.tr('Connect'))
+        connect.setToolTip(self.tr('Start the connection.'))
+        connect.setEnabled(False)
+        connect.triggered.connect(self.quick_connect)
+        self.quick_host.textChanged.connect(lambda host: connect.setEnabled(bool(host.strip())))
+        self.quick_host.returnPressed.connect(self.quick_connect)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+
+    def quick_connect(self):
+        host = self.quick_host.text().strip()
+        if not host or self.vault is None or self._locking:
             return
-        for profile in self.vault.profiles():
+        protocol, _ = self.quick_protocol.currentData()
+        profile = dict(name=host, host=host, port=self.quick_port.value(), protocol=protocol,
+                       username='', identity_file='', credential_source='none',
+                       authentication='prompt_both')
+        try:
+            validator = validate_telnet_profile if protocol == 'telnet' else validate_profile
+            validator(profile)
+        except ValueError as error:
+            QMessageBox.warning(self, self.tr('Connection failed'), self.tr(str(error)))
+            return
+        self.open_profile(profile)
+
+    def connect_startup_profiles(self):
+        vault = self.vault
+        if vault is None or self._locking:
+            return
+        for profile in vault.profiles():
+            if self.vault is not vault or self._locking:
+                break
             if profile.get('connect_at_startup'):
                 self.open_profile(profile)
 
@@ -304,14 +358,32 @@ class MainWindow(QMainWindow):
                 for title in ('Split vertically', 'Split horizontally', 'Grid 2 × 2'):
                     workspace_menu.addAction(self.actions[title])
         workspace_menu.aboutToShow.connect(rebuild_workspace_menu)
-        toggle = self.toolbar.toggleViewAction()
-        toggle.setText(self.tr('Toolbar'))
-        toggle.setIconVisibleInMenu(True)
-        toggle.setIcon(action_icon(self, 'Toolbar'))
-        toggle.setToolTip(self.tr('Show or hide the connection toolbar.'))
         self.menus['View'].addSeparator()
-        self.menus['View'].addAction(toggle)
-        self.actions['Toolbar'] = toggle
+        toolbar_menu = self.menus['View'].addMenu(self.tr('Toolbar'))
+        toolbar_menu.setIcon(action_icon(self, 'Toolbar'))
+        toolbar_menu.menuAction().setIconVisibleInMenu(True)
+        toolbar_modes = QActionGroup(toolbar_menu)
+        self.toolbar_mode_actions = {}
+        for mode, label, icon in (
+                ('large', self.tr('Large (icons and text)'), 'Toolbar'),
+                ('small', self.tr('Small (icons only)'), 'Small toolbar'),
+                ('disabled', self.tr('Disabled'), 'Close tab')):
+            action = toolbar_modes.addAction(action_icon(self, icon), label)
+            action.setCheckable(True)
+            action.setIconVisibleInMenu(True)
+            action.setData(mode)
+            toolbar_menu.addAction(action)
+            self.toolbar_mode_actions[mode] = action
+        toolbar_modes.triggered.connect(self.save_toolbar_mode)
+        self.apply_toolbar_mode(self.vault.toolbar_mode())
+        quick_toggle = QAction(action_icon(self, 'Connect'), self.tr('Quick Connect'), self)
+        quick_toggle.setIconVisibleInMenu(True)
+        quick_toggle.setCheckable(True)
+        quick_toggle.setToolTip(self.tr('Show or hide the Quick Connect toolbar.'))
+        quick_toggle.triggered.connect(self.save_quick_connect_visibility)
+        self.menus['View'].addAction(quick_toggle)
+        self.actions['Quick Connect'] = quick_toggle
+        self.apply_quick_connect_visibility()
         tree_toggle = QAction(action_icon(self, 'Connection tree'), self.tr('Connection tree'), self)
         tree_toggle.setIconVisibleInMenu(True)
         tree_toggle.setCheckable(True)
@@ -650,6 +722,53 @@ class MainWindow(QMainWindow):
         else:
             self.tree.verticalScrollBar().setValue(pending[1])
 
+    def createPopupMenu(self):
+        if self.vault is None:
+            return None
+        menu = QMenu(self)
+        menu.addActions(self.toolbar_mode_actions.values())
+        return menu
+
+    def apply_toolbar_mode(self, mode):
+        self._toolbar_mode = mode
+        self.toolbar_mode_actions[mode].setChecked(True)
+        if mode != 'disabled':
+            small = mode == 'small'
+            self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly if small
+                                            else Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            self.toolbar.setIconSize(QSize(16, 16) if small else QSize(20, 20))
+            self.toolbar.setStyleSheet(
+                'QToolBar { spacing: 2px; padding: 2px; } QToolButton { padding: 3px; }' if small
+                else 'QToolBar { spacing: 4px; padding: 4px; } QToolButton { padding: 5px 7px; }')
+        self.toolbar.setVisible(mode != 'disabled')
+
+    def apply_quick_connect_visibility(self):
+        visible = self.vault.quick_connect_visible()
+        self.quick_connect_toolbar.setVisible(visible)
+        self.actions['Quick Connect'].setChecked(visible)
+
+    def save_quick_connect_visibility(self, visible):
+        try:
+            self.vault.set_quick_connect_visible(visible)
+        except Exception:
+            self.actions['Quick Connect'].setChecked(not visible)
+            QMessageBox.warning(self, self.tr('Save failed'),
+                                self.tr('Unable to save Quick Connect visibility.'))
+            return
+        self.quick_connect_toolbar.setVisible(visible)
+
+    def save_toolbar_mode(self, action):
+        mode = action.data()
+        if mode == self._toolbar_mode or self.vault is None:
+            return
+        try:
+            self.vault.set_toolbar_mode(mode)
+        except Exception:
+            self.toolbar_mode_actions[self._toolbar_mode].setChecked(True)
+            QMessageBox.warning(self, self.tr('Save failed'), self.tr('Unable to save the toolbar mode.'))
+            return
+        self.apply_toolbar_mode(mode)
+
     def switch_database(self, create=False):
         from .databases import DatabaseChooser
         chooser = DatabaseChooser(self.database_path, self, excluded_path=self.database_path)
@@ -680,6 +799,9 @@ class MainWindow(QMainWindow):
         self.vault, self.database_path = replacement, path
         self._tree_clipboard = None
         set_language(self.vault.language())
+        self.apply_toolbar_mode(self.vault.toolbar_mode())
+        self.quick_host.clear()
+        self.apply_quick_connect_visibility()
         self.tree.clear()
         self._filter_expansion = self._filter_selection = None
         self._filter_scroll = 0
@@ -1040,8 +1162,13 @@ class MainWindow(QMainWindow):
         self.open_profile(profile)
 
     def open_profile(self, profile):
+        vault = self.vault
+        if vault is None or self._locking:
+            return
         try:
-            profile = self.vault.effective_profile(profile)
+            profile = prepare_connection_credentials(vault.effective_profile(profile), self)
+            if profile is None or self.vault is not vault or self._locking:
+                return
             if profile.get('protocol') == 'rdp':
                 from remote_manager.protocols.rdp import RdpSession
                 terminal = RdpSession(profile, self)
@@ -1533,6 +1660,7 @@ class MainWindow(QMainWindow):
         while self.tabs.count():
             self.close_tab(0, confirm=False)
         self.search.clear()
+        self.quick_host.clear()
         self._filter_expansion = None
         self._filter_selection = None
         self.tree.clear()
@@ -1543,7 +1671,7 @@ class MainWindow(QMainWindow):
         self._locked_workspace.setParent(self)
         self._locked_workspace.hide()
         self._locked_chrome = [(widget, widget.isVisible()) for widget in
-                               (self.menuBar(), self.toolbar, self.statusBar())]
+                               (self.menuBar(), self.toolbar, self.quick_connect_toolbar, self.statusBar())]
         for widget, _ in self._locked_chrome:
             widget.hide()
         # QActions retain shortcuts even when their menu is hidden.
@@ -1585,6 +1713,8 @@ class MainWindow(QMainWindow):
             widget.setVisible(visible)
         self._locked_actions = self._locked_shortcuts = self._locked_chrome = []
         set_language(self.vault.language())
+        self.apply_toolbar_mode(self.vault.toolbar_mode())
+        self.apply_quick_connect_visibility()
         self.inactivity_limit = self.vault.inactivity_minutes() * 60
         self.last_activity = monotonic()
         self._locking = False

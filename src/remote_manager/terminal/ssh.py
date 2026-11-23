@@ -1,6 +1,7 @@
 """Embedded VT terminal for OpenSSH, local shells and Telnet, rendered by Qt."""
 import errno
 import fcntl
+import locale
 import os
 import re
 import signal
@@ -8,18 +9,19 @@ import struct
 import subprocess
 import termios
 import tempfile
+import time
 
-import pyte
 from PyQt6.QtCore import Qt, QProcess, QSocketNotifier, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PyQt6.QtWidgets import QApplication, QMenu, QWidget
 
+from remote_manager.connection_commands import ConnectionCommands
 from remote_manager.session import SessionStatus
 from remote_manager.ssh_options import advanced_arguments
 from .askpass import AskpassBridge
 from .private_key import open_memory_key
 from .public_key import install_arguments
-from .screen import TerminalScreen
+from .screen import TerminalScreen, TerminalStream
 from .appearance import DEFAULT_OPTIONS, default_font
 from remote_manager.storage.vault import validate_connect_timeout
 from remote_manager.ui.icons import action_icon
@@ -34,7 +36,8 @@ def ssh_command(profile):
         raise ValueError('Invalid username.')
     timeout = profile.get('connect_timeout', 15)
     validate_connect_timeout(timeout)
-    args = ['ssh', '-tt', '-o', 'LogLevel=DEBUG1', '-o', 'ForwardAgent=no', '-o', 'StrictHostKeyChecking=ask',
+    log_level = 'DEBUG2' if profile.get('ssh_startup_commands', '').strip() else 'DEBUG1'
+    args = ['ssh', '-tt', '-o', f'LogLevel={log_level}', '-o', 'ForwardAgent=no', '-o', 'StrictHostKeyChecking=ask',
             '-o', f'ConnectTimeout={timeout}', '-p', str(profile['port'])]
     args += advanced_arguments({'alive_interval': 30, **profile.get('ssh_advanced', {})})
     if profile.get('key_passphrase') and profile.get('identity_file'):
@@ -58,7 +61,6 @@ class Terminal(QWidget):
         self.setMouseTracking(True)
         self.setFont(default_font())
         protocol = profile.get('protocol', 'ssh')
-        local = protocol == 'local'
         self.session_status = SessionStatus(protocol, profile.get('host', ''), profile.get('port'), profile.get('username', ''), self)
         self._diagnostic_buffer = bytearray()
         self._diagnostic_shown = 0
@@ -76,15 +78,10 @@ class Terminal(QWidget):
             self.cursor_timer.start()
         self.screen = TerminalScreen(80, 24, lambda data: self.send(data.encode()),
                                      bell=self.session_status.bell.emit)
-        self.stream = pyte.ByteStream(self.screen)
+        self.stream = TerminalStream(self.screen)
         self.fd = None
         self.process = None
         self.pending = bytearray()
-        # Bound parsing work and yield to keyboard events during continuous output.
-        self.read_resume = QTimer(self)
-        self.read_resume.setSingleShot(True)
-        self.read_resume.setInterval(5)
-        self.read_resume.timeout.connect(self.resume_output)
         self.output_frame = QTimer(self)
         self.output_frame.setSingleShot(True)
         self.output_frame.setInterval(33)
@@ -108,9 +105,17 @@ class Terminal(QWidget):
         self.setAcceptDrops(protocol == 'ssh')
         self.transport = None
         self.diagnostics = None
+        self.askpass = None
+        self.ssh_connection_opened = False
+        self.ssh_startup_commands = profile.get('ssh_startup_commands', '') if protocol == 'ssh' else ''
+        self.connection_commands = ConnectionCommands(
+            self, profile, self.show_connection_command_error, watch_status=protocol == 'telnet')
+        self.connection_commands.start(lambda: self.start_transport(profile, protocol, private_key))
+
+    def start_transport(self, profile, protocol, private_key):
+        local = protocol == 'local'
         if protocol == 'telnet':
             from .telnet import TelnetTransport
-            self.askpass = None
             self.transport = TelnetTransport(profile)
             self.transport.output.connect(self.telnet_output)
             self.transport.activity.connect(self.session_status.activity.emit)
@@ -120,7 +125,6 @@ class Terminal(QWidget):
             self.resize_terminal()
             self.transport.start()
             return
-        self.askpass = None
         master = slave = None
         try:
             master, slave = os.openpty()
@@ -133,7 +137,12 @@ class Terminal(QWidget):
                 args = [shell, '-i']
             else:
                 args = self.ssh_arguments(profile, private_key)
-                env['LC_ALL'] = 'C'
+                # OpenSSH uses LC_CTYPE when escaping its pre-authentication
+                # banner. Keep diagnostic and askpass messages in English.
+                env.pop('LC_ALL', None)
+                env['LC_CTYPE'] = (locale.setlocale(locale.LC_CTYPE)
+                                   if locale.getencoding() == 'UTF-8' else 'C.UTF-8')
+                env['LC_MESSAGES'] = 'C'
                 if self.askpass is not None:
                     env.update(self.askpass.environment())
             self.process = subprocess.Popen(
@@ -187,7 +196,13 @@ class Terminal(QWidget):
         return args
 
     def is_running(self):
-        return self.session_status.ended_at is None if self.transport is not None else self.process.poll() is None
+        if self.transport is not None:
+            return self.session_status.ended_at is None
+        return self.connection_commands.starting or (self.process is not None and self.process.poll() is None)
+
+    def show_connection_command_error(self, message):
+        self.stream.feed(('\r\n' + message + '\r\n').encode())
+        self.update()
 
     def telnet_output(self, data):
         if self.session_status.ended_at is None:
@@ -223,8 +238,18 @@ class Terminal(QWidget):
             if line.startswith(b'Authenticated to ') or line.startswith(b'debug1: Authentication succeeded ('):
                 self.release_private_key()
                 self.session_status.set_state('connected')
+                self.track_ssh_connection()
                 if self.askpass is not None:
                     self.askpass.clear_password()
+            elif (self.ssh_startup_commands and self.session_status.state == 'connected'
+                  and re.fullmatch(rb'debug[12]: shell request accepted on channel [0-9]+\r?', line)
+                  and self.file_transfer_available()):
+                # Wait for the interactive shell request to succeed before
+                # writing anything that could be mistaken for login input.
+                commands, self.ssh_startup_commands = self.ssh_startup_commands, ''
+                if commands.strip():
+                    commands = commands.replace('\r\n', '\n').replace('\r', '\n')
+                    self.send((commands.rstrip('\n').replace('\n', '\r') + '\r').encode())
             elif line.startswith(b'debug1: Next authentication method:'):
                 self.session_status.set_state('authenticating')
             elif not line.startswith((b'debug1:', b'debug2:', b'debug3:')):
@@ -257,28 +282,31 @@ class Terminal(QWidget):
             self.cursor_timer.start()
         self.resize_terminal()
 
-    def resume_output(self):
-        if self.fd is not None:
-            self.reader.setEnabled(True)
-
     def read_output(self, *_):
         if self.fd is None:
             return
+        # Yield between chunks when parsing uses the current event-loop budget.
+        deadline = time.monotonic() + 0.003
+        received = False
         try:
-            data = os.read(self.fd, 4096)
-            if data:
-                self.session_status.activity.emit('rx')
-                self.clear_selection()
+            while True:
+                data = os.read(self.fd, 4096)
+                if not data:
+                    self.reader.setEnabled(False)
+                    break
                 self.stream.feed(data)
-                if not self.output_frame.isActive():
-                    self.output_frame.start()
-                self.reader.setEnabled(False)
-                self.read_resume.start()
-            else:
-                self.reader.setEnabled(False)
+                received = True
+                if time.monotonic() >= deadline:
+                    break
         except OSError as error:
             if error.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
                 self.reader.setEnabled(False)
+        if received:
+            self.session_status.activity.emit('rx')
+            if self.selection_anchor is not None or self.selecting:
+                self.clear_selection()
+            if not self.output_frame.isActive():
+                self.output_frame.start()
 
     def send(self, data):
         if self.transport is not None:
@@ -306,24 +334,34 @@ class Terminal(QWidget):
             self.writer.setEnabled(False)
 
     def check_exit(self):
+        self.track_ssh_connection()
         code = self.process.poll()
         if code is not None:
             self.read_diagnostics()
             for dialog in self.transfer_dialogs:
                 dialog.shutdown()
-            self.session_status.finish(code)
             self.read_output()
             self.release_fd()
             if self.control_directory is not None:
                 self.control_directory.cleanup()
             self.poll.stop()
+            self.finish_ssh_connection(code)
             self.exited.emit(code)
+
+    def track_ssh_connection(self):
+        # OpenSSH creates this private socket after authenticating the destination.
+        if self.connection_commands.after and self.control_path and os.path.exists(self.control_path):
+            self.ssh_connection_opened = True
+
+    def finish_ssh_connection(self, code, intentional=False):
+        self.session_status.finish(code, intentional=intentional)
+        if self.ssh_connection_opened:
+            self.connection_commands.disconnected()
 
     def release_fd(self):
         self.release_private_key()
         if self.key_install_process is not None:
             self.key_install_process.kill()
-        self.read_resume.stop()
         self.output_frame.stop()
         if self.diagnostics is not None:
             self.diagnostics.setEnabled(False)
@@ -420,15 +458,19 @@ class Terminal(QWidget):
             self.open_file_transfer(files=[url.toLocalFile() for url in urls])
 
     def stop(self):
+        self.connection_commands.stop()
         self.clear_selection()
         for dialog in self.transfer_dialogs:
             dialog.shutdown()
         if self.transport is not None:
+            job = self.connection_commands.close_when_finished(self.transport.finished)
+            if self.transport.stop() and job is not None:
+                job.transport_finished()
             self.session_status.finish(intentional=True)
-            self.transport.stop()
             return
-        self.session_status.finish(self.process.poll(), intentional=self.process.poll() is None)
-        if self.process is not None and self.process.poll() is None:
+        self.track_ssh_connection()
+        code = self.process.poll() if self.process is not None else None
+        if self.process is not None and code is None:
             try:
                 os.killpg(self.process.pid, signal.SIGHUP)
             except ProcessLookupError:
@@ -445,6 +487,7 @@ class Terminal(QWidget):
         self.release_fd()
         if self.control_directory is not None:
             self.control_directory.cleanup()
+        self.finish_ssh_connection(code, intentional=code is None)
 
     def resize_terminal(self):
         metrics = QFontMetrics(self.font())

@@ -1,11 +1,13 @@
 """Desktop terminal icon with a theme-independent, scalable fallback."""
 from PyQt6.QtCore import Qt, QRectF, QPointF
-from PyQt6.QtGui import QIcon, QPainter, QPen, QPixmap, QColor
+from PyQt6.QtGui import QIcon, QPainter, QPainterPath, QPen, QPixmap, QColor
 from PyQt6.QtWidgets import QStyle
 
 
 def action_icon(widget, action):
     """Standard desktop action icons with Qt fallbacks when no theme is set."""
+    if action == 'Connect':
+        return QIcon.fromTheme('plug-connect', plug_connection_icon(widget.palette()))
     theme, fallback = {
         'Connection tree': ('view-list-tree', 'SP_DirIcon'),
         'Maximize': ('view-fullscreen', 'SP_TitleBarMaxButton'),
@@ -55,8 +57,8 @@ def action_icon(widget, action):
         'Help': ('help-contents', 'SP_DialogHelpButton'),
         'About': ('help-about', 'SP_MessageBoxInformation'),
         'Toolbar': ('view-list-icons', 'SP_FileDialogDetailedView'),
+        'Small toolbar': ('view-list-compact', 'SP_FileDialogListView'),
         'Status bar': ('dialog-information', 'SP_MessageBoxInformation'),
-        'Connect': ('network-connect', 'SP_DialogOkButton'),
         'Open database': ('document-open', 'SP_DialogOpenButton'),
         'Settings': ('preferences-system', 'SP_FileDialogDetailedView'),
         'Credentials': ('dialog-password', 'SP_FileDialogDetailedView'),
@@ -76,6 +78,47 @@ def action_icon(widget, action):
     else:
         fallback_icon = tree_action_icon(widget, action) if action in ('Add', 'Cut', 'Copy', 'Paste') else widget.style().standardIcon(getattr(QStyle.StandardPixmap, fallback))
     return QIcon.fromTheme(theme, fallback_icon)
+
+
+def plug_connection_icon(palette):
+    plug = QPainterPath()
+    plug.moveTo(11, 7)
+    plug.lineTo(8, 7)
+    plug.quadTo(5, 7, 5, 10)
+    plug.lineTo(5, 14)
+    plug.quadTo(5, 17, 8, 17)
+    plug.lineTo(11, 17)
+    plug.closeSubpath()
+
+    icon = QIcon()
+    for size in (16, 20, 24, 32, 48):
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.scale(size / 24, size / 24)
+        painter.translate(12, 12)
+        painter.rotate(-45)
+        painter.translate(-12, -12)
+
+        painter.setPen(QPen(palette.windowText().color(), 1.8,
+                            Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(1, 12, 5, 12)
+        painter.drawLine(21, 12, 23, 12)
+
+        painter.setPen(QPen(QColor('#e9a229'), 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        for y in (10, 14):
+            painter.drawLine(11, y, 16, y)
+
+        painter.setPen(QPen(QColor('#126342'), 1.4))
+        painter.setBrush(QColor('#48ce87'))
+        painter.drawPath(plug)
+        painter.setPen(QPen(QColor('#1e4a8a'), 1.4))
+        painter.setBrush(QColor('#64a8ff'))
+        painter.drawRoundedRect(QRectF(16, 6, 5, 12), 1.8, 1.8)
+        painter.end()
+        icon.addPixmap(pixmap)
+    return icon
 
 
 def layout_icon(widget, action):

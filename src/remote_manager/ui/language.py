@@ -8,6 +8,36 @@ from PyQt6.QtWidgets import (QAbstractButton, QApplication, QDialog, QLabel,
 ITALIAN = dict(line.split('\t', 1) for line in '''Connection details\tDettagli connessione
 Destination\tDestinazione
 Authentication\tAutenticazione
+Commands\tComandi
+Before connection\tPrima del collegamento
+After disconnection\tDopo la disconnessione
+After SSH login\tDopo l’accesso SSH
+Enter commands for the remote shell, one per line\tInserisci i comandi per la shell remota, uno per riga
+Sends these commands to the interactive SSH shell after login, including when reconnecting.\tInvia questi comandi alla shell SSH interattiva dopo l’accesso, anche quando ti ricolleghi.
+Enter valid SSH startup commands.\tInserisci comandi di avvio SSH validi.
+Local command\tComando locale
+Local command or script path\tComando locale o percorso dello script
+Run a local command or script before connecting. If it fails, choose whether to continue, cancel, or retry.\tEsegue un comando o uno script in locale prima di collegarsi. Se fallisce, puoi continuare, annullare o riprovare.
+Run a local command or script once the established connection closes.\tEsegue un comando o uno script in locale dopo la chiusura del collegamento.
+Enter each local command on a single line.\tInserisci ogni comando locale su una sola riga.
+Could not start the connection after running the local command.\tImpossibile avviare il collegamento dopo l’esecuzione del comando locale.
+Continue\tContinua
+Retry\tRiprova
+Open the connection despite the command error.\tApri il collegamento anche se il comando è fallito.
+Cancel this connection attempt.\tAnnulla questo tentativo di collegamento.
+Run the local command again before connecting.\tEsegui di nuovo il comando locale prima di collegarti.
+Connection attempt cancelled.\tTentativo di collegamento annullato.
+After disconnection: %1\tDopo la disconnessione: %1
+The local command could not run.\tImpossibile eseguire il comando locale.
+The local command exited with code %1.\tIl comando locale è terminato con il codice %1.
+RDP authentication\tAutenticazione RDP
+Use configured credentials\tUsa le credenziali configurate
+Always ask for password\tChiedi sempre la password
+Always ask for username and password\tChiedi sempre nome utente e password
+Missing credentials are requested when connecting. Credentials entered in the prompt are used only for that connection attempt.\tLe credenziali mancanti vengono richieste al momento della connessione. I dati inseriti vengono usati solo per quel tentativo.
+Connect to {host} on port {port}\tConnetti a {host} sulla porta {port}
+Start the RDP connection.\tAvvia la connessione RDP.
+Close this dialog without connecting.\tChiudi questa finestra senza connetterti.
 Group details\tDettagli gruppo
 SSH defaults\tImpostazioni SSH predefinite
 Connections can inherit a shared credential from this group.\tLe connessioni possono ereditare una credenziale condivisa da questo gruppo.
@@ -559,7 +589,9 @@ ITALIAN.update({
     'Time since the local shell started': 'Tempo trascorso dall’avvio della shell locale',
     'Exit': 'Esci', 'Disconnect': 'Disconnetti', 'Close tab': 'Chiudi scheda',
     'Find connection': 'Cerca connessione', 'Toolbar': 'Barra degli strumenti', 'Status bar': 'Barra di stato',
-    'Show or hide the connection toolbar.': 'Mostra o nascondi la barra degli strumenti delle connessioni.',
+    'Large (icons and text)': 'Grande (icone e testo)',
+    'Small (icons only)': 'Piccola (solo icone)',
+    'Unable to save the toolbar mode.': 'Impossibile salvare la modalità della barra degli strumenti.',
     'Show or hide the current session status.': 'Mostra o nascondi lo stato della sessione attuale.',
     'Create and open a separate encrypted configuration database.': 'Crea e apri un database di configurazione cifrato separato.',
     'Disconnect the current session and keep its terminal tab.': 'Disconnetti la sessione attuale mantenendo la scheda del terminale.',
@@ -579,7 +611,7 @@ ITALIAN.update({
     'Session > Disconnect stops the current session but keeps its terminal. Reconnect opens it again using the saved connection settings. Close tab disconnects and removes it.': 'Sessione > Disconnetti termina la sessione attuale mantenendo il terminale. Riconnetti la riapre usando le impostazioni salvate. Chiudi scheda disconnette e rimuove il terminale.',
     'Ctrl+Shift+C copies selected text; Ctrl+Shift+V pastes. Hold Shift to select locally when a remote program captures the mouse. Ctrl+mouse wheel changes font size.': 'Ctrl+Maiusc+C copia il testo selezionato; Ctrl+Maiusc+V incolla. Tieni premuto Maiusc per selezionare localmente quando un programma remoto cattura il mouse. Ctrl+rotella modifica la dimensione del carattere.',
     'Ctrl+N, Ctrl+O, Ctrl+F and F1 are local shortcuts only while the tree or search field has focus. Ordinary terminal control keys remain available to the remote program.': "Ctrl+N, Ctrl+O, Ctrl+F e F1 sono scorciatoie locali solo quando l'albero o il campo di ricerca hanno il focus. I normali tasti di controllo del terminale restano disponibili al programma remoto.",
-    'Telnet is unencrypted. Manual login sends no stored credentials automatically. In the Telnet tab, explicitly choose password-only or username/password login to send stored credentials at their prompts.': "Telnet non è cifrato. L'accesso manuale non invia automaticamente credenziali salvate. Nella scheda Telnet scegli esplicitamente l'accesso con sola password o con nome utente e password per inviare le credenziali ai rispettivi prompt.",
+    'Telnet is unencrypted. Manual login sends no stored credentials automatically. In General, choose password-only or username/password login to send credentials at the server prompts.': "Telnet non è cifrato. L'accesso manuale non invia automaticamente credenziali salvate. Nella scheda Generale scegli l'accesso con sola password o con nome utente e password per inviare le credenziali ai prompt del server.",
     'Username prompt and Password prompt accept literal text such as login: and password:. Matching ignores letter case. Leave blank for automatic detection; each field is sent once and retries remain manual.': 'Prompt nome utente e Prompt password accettano testo letterale come login: e password:. Il confronto ignora maiuscole e minuscole. Lascia vuoto per il riconoscimento automatico; ogni campo viene inviato una sola volta e i tentativi successivi restano manuali.',
     'Changes are saved automatically to the encrypted database. File > Open database switches databases; File > New database creates a separate archive.': 'Le modifiche vengono salvate automaticamente nel database cifrato. File > Apri database cambia database; File > Nuovo database crea un archivio separato.',
     'Edit > Credentials manages shared credentials. In Edit > Settings, use Change vault protection to change the password or manage a key file for a .uni archive. The archive description is public.': 'Modifica > Credenziali gestisce le credenziali condivise. In Modifica > Impostazioni, usa Modifica la protezione del database per cambiare la password o gestire il file chiave di un archivio .uni. La descrizione dell’archivio è pubblica.',
@@ -760,6 +792,11 @@ ITALIAN.update({
 
 ITALIAN.update({
     'Connection tree': 'Albero delle connessioni',
+    'Quick Connect': 'Connessione rapida',
+    'Host:': 'Host:',
+    'Enter a hostname, SSH alias or IP address.': 'Inserisci un nome host, un alias SSH o un indirizzo IP.',
+    'Show or hide the Quick Connect toolbar.': 'Mostra o nasconde la barra di connessione rapida.',
+    'Unable to save Quick Connect visibility.': 'Impossibile salvare la visibilità della barra di connessione rapida.',
     'Drag to resize; double-click to hide the connections panel.': 'Trascina per ridimensionare; fai doppio clic per nascondere il pannello delle connessioni.',
     'Show or hide the connections panel, including search and tree tools.': 'Mostra o nasconde il pannello delle connessioni, inclusi ricerca e comandi dell’albero.',
     'No databases in the list. Open a file or create a new database.': 'Nessun database in elenco. Apri un file o crea un nuovo database.',
@@ -834,3 +871,18 @@ def set_language(language):
     app._unircm_ui_translations.language = language
     for window in app.topLevelWidgets():
         app._unircm_ui_translations.apply(window)
+
+ITALIAN.update({
+    'Sign-in': 'Accesso',
+    'Use saved credentials': 'Usa credenziali salvate',
+    'Ask for password when connecting': 'Chiedi la password alla connessione',
+    'Ask for username and password when connecting': 'Chiedi nome utente e password alla connessione',
+    'Use credential username': 'Usa il nome utente della credenziale',
+    'Let OpenSSH choose': 'Lascia scegliere a OpenSSH',
+    'No saved credential': 'Nessuna credenziale salvata',
+    'Connection authentication': 'Autenticazione della connessione',
+    'Start the connection.': 'Avvia la connessione.',
+    'Telnet sends credentials without encryption.': 'Telnet invia le credenziali senza cifratura.',
+    'Stored only in the encrypted database. Leave empty to enter it when connecting.':
+        'Salvata solo nel database cifrato. Lascia il campo vuoto per inserirla alla connessione.',
+})

@@ -56,7 +56,7 @@ class AskpassBridge(QObject):
 
     def environment(self):
         return dict(SSH_ASKPASS=self.helper, SSH_ASKPASS_REQUIRE='force',
-                    UNIRCM_ASKPASS_SOCKET=self.address, LC_ALL='C')
+                    UNIRCM_ASKPASS_SOCKET=self.address)
 
     def clear_password(self):
         self.password = ''

@@ -39,9 +39,9 @@ def test_ssh_reconnect_preferences_and_password_visibility(qtbot, tmp_path):
     dialog.credentials.show_secrets.setChecked(True)
     assert dialog.credentials.password.echoMode() == QLineEdit.EchoMode.Normal
     assert dialog.credentials.key_passphrase.echoMode() == QLineEdit.EchoMode.Password
-    dialog.credential_selector.source_options['none'].setChecked(True)
+    dialog.credential_selector.source.setCurrentIndex(dialog.credential_selector.source.findData('none'))
     assert dialog.credentials.password.echoMode() == QLineEdit.EchoMode.Password
-    dialog.credential_selector.source_options['local'].setChecked(True)
+    dialog.credential_selector.source.setCurrentIndex(dialog.credential_selector.source.findData('local'))
     dialog.auto_reconnect.setChecked(True)
     dialog.reconnect_delay.setValue(12)
     dialog.save()

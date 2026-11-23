@@ -16,6 +16,7 @@ from PyQt6.QtGui import QImage, QPainter
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
 
 from remote_manager.protocols.validation import validate_profile
+from remote_manager.connection_commands import ConnectionCommands
 from remote_manager.session import SessionStatus
 from remote_manager.ui.icons import action_icon
 
@@ -342,7 +343,8 @@ class VncSession(QWidget):
         self.worker.frame.connect(self.canvas.receive)
         self.worker.frame.connect(self.update_desktop_status)
         self.worker.ended.connect(self.finished)
-        self.worker.start()
+        self.connection_commands = ConnectionCommands(self, profile, self.result.setText)
+        self.connection_commands.start(self.worker.start)
 
     def update_desktop_status(self):
         self.session_status.set_desktop_size(self.canvas.image.width(), self.canvas.image.height())
@@ -366,9 +368,11 @@ class VncSession(QWidget):
         self.options = options
 
     def is_running(self):
-        return self.worker.isRunning()
+        return self.connection_commands.starting or self.worker.isRunning()
 
     def stop(self):
+        self.connection_commands.stop()
         self.worker.stop()
         # create_connection and reads have bounded timeouts; never destroy a live QThread.
         self.worker.wait()
+        self.session_status.finish(intentional=True)
