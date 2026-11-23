@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QLineEdit
 from sqlcipher3 import dbapi2 as sqlcipher
 
 from remote_manager.storage.vault import Vault
-from remote_manager.storage.archive import ArchiveVault
+from remote_manager.storage.archive import ArchiveVault, restore_backup
 from remote_manager.ui.main_window import MainWindow
 from remote_manager.ui.settings import ChangePasswordDialog, SettingsDialog
 
@@ -22,7 +22,21 @@ def test_rekey_reopens_and_preserves_data(tmp_path, archive):
     vault.set_inactivity_minutes(5)
     with pytest.raises(ValueError):
         vault.change_password('incorrect', 'replacement')
+    assert not list(tmp_path.glob('*.backup-*'))
     vault.change_password('original', "new ' master")
+    backup, = tmp_path.glob(f'*.backup-*-password{path.suffix}')
+    assert backup.stat().st_mode & 0o777 == 0o600
+    restored = tmp_path / f'restored{path.suffix}'
+    with pytest.raises(sqlcipher.DatabaseError):
+        restore_backup(backup, restored, "new ' master", is_archive=archive)
+    assert not restored.exists()
+    restore_backup(backup, restored, 'original', is_archive=archive)
+    with pytest.raises(FileExistsError):
+        restore_backup(backup, restored, 'original', is_archive=archive)
+    copied = open_vault(restored, 'original', archive)
+    assert copied.profiles()[0]['password'] == 'remote-secret'
+    assert copied.inactivity_minutes() == 5
+    copied.close()
     assert vault.profiles()[0]['password'] == 'remote-secret'
     vault.set_inactivity_minutes(7)  # Archive connection wrapper still persists.
     vault.close()
@@ -83,6 +97,42 @@ def test_password_dialog_and_settings(qtbot, tmp_path):
     assert all(not field.text() for field in dialog.fields.values())
     vault.close()
     Vault(tmp_path / 'ui.db', 'replacement').close()
+
+
+def test_vault_key_file_ui(qtbot, tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QFileDialog, QPushButton
+    from remote_manager.ui.dialogs import VaultUnlockPanel
+
+    path = tmp_path / 'work.uni'
+    vault = ArchiveVault(path, 'master', 'Work')
+    dialog = ChangePasswordDialog(vault)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    key_file = tmp_path / 'work.key'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *args, **kwargs: (str(key_file), ''))
+    dialog.fields['current'].setText('master')
+    dialog.key_file_action.setCurrentIndex(dialog.key_file_action.findData('select'))
+    generate = next(button for button in dialog.new_key_file.findChildren(QPushButton)
+                    if button.text() == 'Generate new key file…')
+    assert not generate.icon().isNull()
+    generate.click()
+    dialog.save()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert vault.key_file_required
+    assert not dialog.new_key_file.path
+    vault.close()
+
+    panel = VaultUnlockPanel(path)
+    qtbot.addWidget(panel)
+    panel.password.setText('master')
+    panel.submit()
+    assert panel.error.text() == 'Select the required key file.'
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args, **kwargs: (str(key_file), ''))
+    panel.key_file.browse()
+    with qtbot.waitSignal(panel.unlocked) as unlocked:
+        panel.submit()
+    assert not panel.key_file.path
+    unlocked.args[0].close()
 
 
 def test_activity_and_automatic_lock_closes_editors(qtbot, tmp_path, monkeypatch):

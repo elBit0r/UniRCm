@@ -2,8 +2,13 @@
 from PyQt6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QLabel,
                             QLineEdit, QPushButton, QSpinBox, QPlainTextEdit, QComboBox,
                             QVBoxLayout, QWidget, QScrollArea, QFrame, QCheckBox)
+from remote_manager.storage.archive import ArchiveVault
+from remote_manager.storage.kdf import KeyFileError
+from remote_manager.storage.vault import BackupError
+
 from .credentials import decorate_buttons
 from .icons import action_icon
+from .key_file import KeyFilePicker
 from .forms import (NamedButtonBox, polish_dialog, primary_action, section,
                     validated_field, require_fields, field_error)
 
@@ -11,7 +16,9 @@ from .forms import (NamedButtonBox, polish_dialog, primary_action, section,
 class ChangePasswordDialog(QDialog):
     def __init__(self, vault, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(self.tr('Change master password'))
+        self.vault = vault
+        self.is_archive = isinstance(vault, ArchiveVault)
+        self.setWindowTitle(self.tr('Change vault protection') if self.is_archive else self.tr('Change master password'))
         self.resize(620, 420)
         layout = QFormLayout(self)
         section(layout, 'Master password', 'The current password is required to protect the encrypted database with a new password.')
@@ -29,14 +36,38 @@ class ChangePasswordDialog(QDialog):
             QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password)
             for field in self.fields.values()])
         layout.addRow(self.show_passwords)
+        self.current_key_file = None
+        if self.is_archive:
+            if vault.key_file_required:
+                self.current_key_file = KeyFilePicker(self)
+                layout.addRow(self.tr('Current key file'), self.current_key_file)
+            self.key_file_action = QComboBox()
+            self.key_file_action.addItem(self.tr('Keep current key file') if vault.key_file_required else self.tr('Use password only'), 'keep')
+            self.key_file_action.addItem(
+                self.tr('Replace key file') if vault.key_file_required else self.tr('Add key file'), 'select')
+            if vault.key_file_required:
+                self.key_file_action.addItem(self.tr('Remove key file'), 'remove')
+            layout.addRow(self.tr('Key file'), self.key_file_action)
+            self.new_key_file = KeyFilePicker(self, allow_generate=True)
+            layout.addRow(self.new_key_file)
+            self.new_key_file.hide()
+            self.key_file_action.currentIndexChanged.connect(
+                lambda: self.new_key_file.setVisible(self.key_file_action.currentData() == 'select'))
+            warning = QLabel(self.tr('If you lose a required key file, you cannot unlock the database. '
+                                     'To change only the key file, leave the new password fields empty.'))
+            warning.setWordWrap(True)
+            layout.addRow(warning)
+        backup = QLabel(self.tr('An encrypted backup is saved beside the database. It uses the current master password and any current key file.')
+                        if self.is_archive else self.tr('An encrypted backup is saved beside the database. It uses the current master password.'))
+        backup.setWordWrap(True)
+        layout.addRow(backup)
         self.error = QLabel()
         self.error.setWordWrap(True)
         layout.addRow(self.error)
         buttons = NamedButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         decorate_buttons(buttons)
-        primary_action(buttons, 'Change master password')
+        primary_action(buttons, 'Change vault protection' if self.is_archive else 'Change master password')
         layout.addRow(buttons)
-        self.vault = vault
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)
         self.finished.connect(self.clear)
@@ -46,22 +77,51 @@ class ChangePasswordDialog(QDialog):
         self.show_passwords.setChecked(False)
         for field in self.fields.values():
             field.clear()
+        if self.current_key_file:
+            self.current_key_file.clear()
+        if self.is_archive:
+            self.new_key_file.clear()
 
     def save(self):
         self.error.clear()
-        if not require_fields(self, [(self.fields['current'], 'Enter the current master password.'),
-                                     (self.fields['new'], 'Enter a new master password.')]):
+        action = self.key_file_action.currentData() if self.is_archive else 'keep'
+        required = [(self.fields['current'], 'Enter the current master password.')]
+        if action == 'keep':
+            required.append((self.fields['new'], 'Enter a new master password.'))
+        if not require_fields(self, required):
             return
-        if self.fields['new'].text() != self.fields['confirmation'].text():
+        current = self.fields['current'].text()
+        replacement = self.fields['new'].text()
+        if replacement != self.fields['confirmation'].text():
             field_error(self, self.fields['confirmation'], self.tr('New passwords do not match.'))
             return
+        options = {}
+        if self.current_key_file:
+            options['key_file'] = self.current_key_file.path
+        if action == 'select':
+            if self.new_key_file.path is None:
+                self.error.setText(self.tr('Choose or generate a new key file.'))
+                return
+            options['new_key_file'] = self.new_key_file.path
+        elif action == 'remove':
+            options['new_key_file'] = None
         try:
-            self.vault.change_password(self.fields['current'].text(), self.fields['new'].text())
+            self.vault.change_password(current, replacement or current, **options)
+        except KeyFileError as error:
+            self.error.setText(self.tr(str(error)))
+            return
+        except BackupError:
+            self.error.setText(self.tr('Unable to create a verified encrypted backup. Check disk space and database access.'))
+            return
         except Exception as error:
             message = str(error)
             field = ('current' if message == 'Current master password is incorrect.'
                      else 'new' if message == 'Choose a different new master password.' else None)
-            if isinstance(error, ValueError) and field:
+            if self.is_archive and self.current_key_file and field == 'current':
+                self.error.setText(self.tr('The current master password or key file is incorrect.'))
+            elif field == 'new' and action != 'keep':
+                self.error.setText(self.tr('Choose a different key file or master password.'))
+            elif isinstance(error, ValueError) and field:
                 field_error(self, self.fields[field], self.tr(message))
             else:
                 self.error.setText(self.tr(message) if isinstance(error, ValueError) else self.tr('Unable to change the master password.'))
@@ -116,8 +176,12 @@ class SettingsDialog(QDialog):
                 parent.refresh()
         profiles.clicked.connect(manage_profiles)
         layout.addRow(profiles)
-        change = QPushButton(action_icon(self, 'Lock'), self.tr('Change master password…'))
-        change.setToolTip(self.tr('Requires the current master password and verifies the encrypted database with the new password.'))
+        if isinstance(vault, ArchiveVault):
+            change = QPushButton(action_icon(self, 'Lock'), self.tr('Change vault protection…'))
+            change.setToolTip(self.tr('Change the master password or add, replace or remove a key file.'))
+        else:
+            change = QPushButton(action_icon(self, 'Lock'), self.tr('Change master password…'))
+            change.setToolTip(self.tr('Requires the current master password and verifies the encrypted database with the new password.'))
         change.clicked.connect(lambda: ChangePasswordDialog(vault, self).exec())
         layout.addRow(change)
         self.error = QLabel()

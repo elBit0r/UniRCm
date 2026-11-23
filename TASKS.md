@@ -11,14 +11,14 @@ Updated 2026-11-22. [PROJECT.md](PROJECT.md) defines product scope.
 
 - [ ] Review the native desktop UI at high DPI, including tree and workspace
   dragging, splitter gestures and terminal selection.
-- [ ] Verify RDP dynamic resizing against a Display Control-capable server.
-  Check remote mouse wheel input, visual options, administrative sessions and
+- [ ] Check remote RDP mouse wheel input, visual options, administrative sessions and
   changed-certificate acceptance limited to the active session.
 - [ ] Verify Telnet against an external router or switch, including login
   prompts that may require manual entry.
 - [ ] Measure terminal responsiveness and CPU usage with continuous remote
   output, including aafire.
-- [ ] Verify VNC authentication, rendering and input against a real VNC server.
+- [ ] Verify authenticated VNC rendering and input on the Raspberry Pi. Its
+  RFB 3.8 server offered classic VNC authentication and rejected the test password.
 - [ ] Verify installation and real sessions on a Debian 13 amd64 desktop.
 - [ ] Review distribution dependencies and bundled artwork obligations.
   The project license is GPL-3.0-or-later.
@@ -68,14 +68,16 @@ Updated 2026-11-22. [PROJECT.md](PROJECT.md) defines product scope.
 - **RDP.** The optional native FreeRDP 3 bridge embeds the desktop in Qt.
   It supports common credentials, certificate checks, keyboard and mouse,
   scaling, fullscreen and opt-in text clipboard. Local scaling is used when
-  the server lacks Display Control.
+  the server lacks Display Control. On Ubuntu, enabling RDPGFX restored
+  authenticated desktop rendering. Verified a live Display Control resize
+  from 786×571 to 986×711 and clean disconnect.
 - **Telnet.** Supports negotiation, encoding, resize, manual login and
   one-shot login with shared vault credentials and cleartext warnings.
 - **VNC (experimental).** The embedded Qt RFB 3.8 viewer supports raw
-  framebuffers, scaling, keyboard/mouse input and view-only mode. LibVNCClient
-  supplies authentication using shared vault credentials in memory. Linux
-  fixture and DES vector checks passed. TLS, clipboard, wheel input,
-  fullscreen and broader encoding support remain open.
+  framebuffers, remote size changes, scaling, keyboard and mouse input
+  including vertical scrolling, and view-only mode. LibVNCClient uses shared
+  vault credentials in memory. Linux wire fixture and DES vector checks
+  passed. TLS, clipboard, fullscreen and broader encoding support remain open.
 - **UI and packaging.** English and Italian UI, scrollable editors with fixed
   Save/Cancel controls, and wheel/sdist packaging with an optional native RDP
   bridge. ABI-2 bridge binaries require rebuilding for ABI 3.
@@ -83,7 +85,7 @@ Updated 2026-11-22. [PROJECT.md](PROJECT.md) defines product scope.
 ## Deferred or limited
 
 - Defer HTTP/HTTPS and external credential providers.
-- Keep backups manual and duplication limited to individual connections.
+- Keep duplication limited to individual connections.
 - SFTP directory recursion and shell-directory tracking remain unsupported.
   Connectivity or permissions can prevent cleanup of a cancelled upload.
 - RDP file/image clipboard and pointer warping remain unsupported.
@@ -143,6 +145,14 @@ Updated 2026-11-22. [PROJECT.md](PROJECT.md) defines product scope.
   correct password. The current build opens it and distinguishes unsupported
   schemas from archive locks. Twelve archive and vault tests passed, including
   unchanged archive bytes after a second open attempt.
+- Verified automatic encrypted backups before schema and master-password changes,
+  guided restore to a separate file, the legacy PBKDF2 upgrade to 512,000
+  iterations, and Argon2id for new archives. Twenty-five targeted storage and
+  UI tests passed on Linux, including interruption on either side of password
+  publication. Three packaging checks passed against a fresh local wheel.
+- Verified optional key files for portable archives. Thirty-one Linux tests
+  covered generation, unlock, password-only compatibility, add/replace/remove
+  with encrypted backup, UI selection and recovery around rekey publication.
 - Real OpenSSH checks covered concurrent sessions, password and encrypted key
   authentication, Vim/mc, ProxyJump and forwarding. A passphrase-protected
   imported key worked after deleting its source file. A fresh login also

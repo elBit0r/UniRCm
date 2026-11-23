@@ -41,6 +41,11 @@ unircm
 
 On first launch, create a master password. Then use **File → New connection** to save a profile and double-click it to connect.
 
+When creating a `.uni` archive, you can also generate or select a key file.
+To add, replace or remove one later, open **Database settings → Change vault
+protection**. Keep a separate copy of each key file you need. If you lose a
+required file, you lose access to the archive and any backup that requires it.
+
 To enable RDP, install a C compiler, `pkg-config`, and the FreeRDP 3 and WinPR 3 development libraries. With the virtual environment active, run:
 
 ```sh

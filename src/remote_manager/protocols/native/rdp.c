@@ -1,10 +1,12 @@
 /* Small FreeRDP 3 ABI bridge. Only the session worker calls this API. */
 #include <freerdp/freerdp.h>
 #include <freerdp/gdi/gdi.h>
+#include <freerdp/gdi/gfx.h>
 #include <freerdp/input.h>
 #include <freerdp/settings.h>
 #include <winpr/synch.h>
 #include <winpr/wlog.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
@@ -33,6 +35,7 @@ typedef struct {
     frame_cb frame;
     cert_cb cert;
     DispClientContext* disp;
+    atomic_bool graphics_failed;
     BOOL display_ready;
     UINT32 width, height, sent_width, sent_height;
 } Context;
@@ -49,6 +52,10 @@ static UINT display_caps(DispClientContext* disp, UINT32 monitors, UINT32 a, UIN
 }
 static void channel_connected(void* context, const ChannelConnectedEventArgs* e) {
     Context* c = context;
+    if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0) {
+        atomic_store(&c->graphics_failed,
+                     !c->base.gdi || !gdi_graphics_pipeline_init(c->base.gdi, e->pInterface));
+    }
     if (strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) == 0) {
         clipboard_connected(c, e->pInterface);
     }
@@ -60,6 +67,9 @@ static void channel_connected(void* context, const ChannelConnectedEventArgs* e)
 }
 static void channel_disconnected(void* context, const ChannelDisconnectedEventArgs* e) {
     Context* c = context;
+    if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0 && c->base.gdi) {
+        gdi_graphics_pipeline_uninit(c->base.gdi, e->pInterface);
+    }
     if (strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) == 0) {
         pthread_mutex_lock(&c->clip_lock);
         c->clip = NULL; c->clip_ready = FALSE; c->clip_pending = FALSE;
@@ -121,6 +131,7 @@ void* urdp_new(const char* host, unsigned port, const char* user, const char* pa
     if (!f) return NULL;
     f->ContextSize = sizeof(Context);
     if (!freerdp_context_new(f)) { freerdp_free(f); return NULL; }
+    atomic_init(&((Context*)f->context)->graphics_failed, 0);
     pthread_mutex_init(&((Context*)f->context)->clip_lock, NULL);
     ((Context*)f->context)->frame = frame;
     ((Context*)f->context)->cert = verify;
@@ -141,7 +152,7 @@ void* urdp_new(const char* host, unsigned port, const char* user, const char* pa
         !freerdp_settings_set_uint32(s, FreeRDP_ColorDepth, 32) ||
         !freerdp_settings_set_uint32(s, FreeRDP_TcpConnectTimeout, 10000) ||
         !freerdp_settings_set_bool(s, FreeRDP_SoftwareGdi, TRUE) ||
-        !freerdp_settings_set_bool(s, FreeRDP_SupportGraphicsPipeline, FALSE)) {
+        !freerdp_settings_set_bool(s, FreeRDP_SupportGraphicsPipeline, TRUE)) {
         pthread_mutex_destroy(&((Context*)f->context)->clip_lock);
         freerdp_context_free(f); freerdp_free(f); return NULL;
     }
@@ -208,9 +219,13 @@ int urdp_step(freerdp* f) {
     DWORD n = freerdp_get_event_handles(f->context, events, 64);
     if (!n || WaitForMultipleObjects(n, events, FALSE, 20) == WAIT_FAILED) return 0;
     if (!freerdp_check_event_handles(f->context)) return 0;
-    return send_layout((Context*)f->context);
+    Context* c = (Context*)f->context;
+    return !atomic_load(&c->graphics_failed) && send_layout(c);
 }
-unsigned urdp_error(freerdp* f) { return freerdp_get_last_error(f->context); }
+unsigned urdp_error(freerdp* f) {
+    unsigned error = freerdp_get_last_error(f->context);
+    return error ? error : atomic_load(&((Context*)f->context)->graphics_failed);
+}
 void urdp_abort(freerdp* f) { freerdp_abort_connect_context(f->context); }
 void urdp_free(freerdp* f) {
     freerdp_disconnect(f);

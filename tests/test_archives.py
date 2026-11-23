@@ -6,15 +6,19 @@ import zipfile
 import pytest
 from sqlcipher3 import dbapi2 as sqlcipher
 
-from remote_manager.storage.archive import ArchiveInUse, ArchiveVault, RecoveryConflict, metadata
-from remote_manager.storage.vault import Vault
+from remote_manager.storage.archive import ArchiveInUse, ArchiveVault, RecoveryConflict, metadata, restore_backup
+from remote_manager.storage.kdf import KeyFileError, generate_key_file
+from remote_manager.storage.vault import BackupError, Vault
 
 
 def test_archive_encryption_isolation_and_lock(tmp_path):
     first = tmp_path / 'work.uni'
     second = tmp_path / 'home.uni'
     vault = ArchiveVault(first, 'test-master', 'Work')
-    assert metadata(first)['kdf_iterations'] == 512_000
+    assert metadata(first)['format_version'] == 3
+    assert not list(tmp_path.glob('*.backup-*'))
+    with pytest.raises(sqlcipher.DatabaseError):
+        Vault.verify_key(vault.path, 'test-master', kdf_iterations=512_000)
     assert int(vault.connection.execute('PRAGMA kdf_iter').fetchone()[0]) == 512_000
     vault.save(dict(name='Private server', host='private.example', port=22,
                     username='admin', identity_file=''))
@@ -35,6 +39,7 @@ def test_archive_encryption_isolation_and_lock(tmp_path):
     assert metadata(first)['description'] == 'Work'
     other = ArchiveVault(second, 'other-master', 'Home')
     assert other.profiles() == []
+    assert metadata(second)['argon2_salt'] != metadata(first)['argon2_salt']
     other.close()
     vault.close()
 
@@ -105,6 +110,127 @@ vault.save(dict(name='Recovered SSH', host='recovered.example', port=22,
     assert not working.exists()
 
 
+@pytest.mark.parametrize('published', [False, True])
+@pytest.mark.parametrize('add_key_file', [False, True])
+def test_rekey_recovers_using_the_password_for_the_published_archive(tmp_path, published, add_key_file):
+    path = tmp_path / 'work.uni'
+    vault = ArchiveVault(path, 'old password', 'Work')
+    vault.set_inactivity_minutes(11)
+    vault.close()
+    key_file = tmp_path / 'vault.key'
+    if add_key_file:
+        generate_key_file(key_file)
+
+    result = subprocess.run([sys.executable, '-', str(path), str(published)], input="""
+import os
+import signal
+import sys
+from pathlib import Path
+from remote_manager.storage.archive import ArchiveVault
+
+path = Path(sys.argv[1])
+vault = ArchiveVault(path, 'old password')
+replace = os.replace
+
+def interrupt_publication(source, destination):
+    if destination == path:
+        if sys.argv[2] == 'True':
+            replace(source, destination)
+        os.kill(os.getpid(), signal.SIGKILL)
+    return replace(source, destination)
+
+os.replace = interrupt_publication
+key_file = path.with_name('vault.key')
+options = {'new_key_file': key_file} if key_file.exists() else {}
+vault.change_password('old password', 'new password', **options)
+""", text=True, capture_output=True, timeout=30)
+    assert result.returncode == -signal.SIGKILL, result.stderr
+
+    current, wrong = ('new password', 'old password') if published else ('old password', 'new password')
+    original = path.read_bytes()
+    assert bool(metadata(path).get('key_file_required')) == (published and add_key_file)
+    if published and add_key_file:
+        with pytest.raises(KeyFileError):
+            ArchiveVault(path, current)
+    with pytest.raises(sqlcipher.DatabaseError):
+        ArchiveVault(path, wrong, key_file=key_file if add_key_file else None)
+    assert path.read_bytes() == original
+    recovered = ArchiveVault(path, current, key_file=key_file if published and add_key_file else None)
+    assert recovered.inactivity_minutes() == 11
+    recovered.close()
+
+
+@pytest.mark.parametrize('iterations', [None, 512_000])
+def test_key_file_creation_and_unlock(tmp_path, iterations):
+    import hashlib
+
+    key_file = tmp_path / 'vault.key'
+    generate_key_file(key_file)
+    key_data = key_file.read_bytes()
+    assert len(key_data) == 32
+    assert key_file.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(FileExistsError):
+        generate_key_file(key_file)
+    assert key_file.read_bytes() == key_data
+
+    path = tmp_path / 'work.uni'
+    vault = ArchiveVault(path, 'master', 'Work', kdf_iterations=iterations, key_file=key_file)
+    vault.set_inactivity_minutes(12)
+    vault.close()
+    public = metadata(path)
+    assert public['key_file_required'] is True
+    assert set(public) == {'description', 'format_version', 'key_file_required', 'password_salt'} | (
+        {'kdf_iterations'} if iterations is not None else set())
+    archive_bytes = path.read_bytes()
+    digest = hashlib.sha256(key_data)
+    assert all(secret not in archive_bytes for secret in (key_data, digest.digest(), digest.hexdigest().encode()))
+    with pytest.raises(KeyFileError):
+        ArchiveVault(path, 'master')
+    wrong_file = tmp_path / 'wrong.key'
+    generate_key_file(wrong_file)
+    with pytest.raises(sqlcipher.DatabaseError):
+        ArchiveVault(path, 'master', key_file=wrong_file)
+    with pytest.raises(sqlcipher.DatabaseError):
+        ArchiveVault(path, 'wrong password', key_file=key_file)
+    assert path.read_bytes() == archive_bytes
+    renamed = key_file.rename(tmp_path / 'renamed.key')
+    vault = ArchiveVault(path, 'master', key_file=renamed)
+    assert vault.inactivity_minutes() == 12
+    vault.close()
+
+
+def test_rekey_add_replace_remove_and_restore_key_file(tmp_path):
+    first, second = (tmp_path / name for name in ('first.key', 'second.key'))
+    generate_key_file(first)
+    generate_key_file(second)
+    path = tmp_path / 'work.uni'
+    vault = ArchiveVault(path, 'master', 'Work')
+    vault.set_inactivity_minutes(10)
+    vault.change_password('master', 'master', new_key_file=first)
+    assert vault.key_file_required
+    with pytest.raises(ValueError):
+        vault.change_password('master', 'master', key_file=first, new_key_file=first)
+    vault.change_password('master', 'master', key_file=first, new_key_file=second)
+    vault.change_password('master', 'master', key_file=second, new_key_file=None)
+    assert not vault.key_file_required
+    vault.close()
+
+    password_only = ArchiveVault(path, 'master')
+    assert password_only.inactivity_minutes() == 10
+    password_only.close()
+    added, replaced, removed = sorted(tmp_path.glob('*.backup-*-key-file.uni'))
+    assert not metadata(added).get('key_file_required')
+    for backup, key in [(replaced, first), (removed, second)]:
+        restored_path = tmp_path / f'{key.stem}-restored.uni'
+        with pytest.raises(KeyFileError):
+            restore_backup(backup, restored_path, 'master', is_archive=True)
+        assert not restored_path.exists()
+        restore_backup(backup, restored_path, 'master', is_archive=True, key_file=key)
+        restored = ArchiveVault(restored_path, 'master', key_file=key)
+        assert restored.inactivity_minutes() == 10
+        restored.close()
+
+
 def test_invalid_archive_and_no_overwrite(tmp_path):
     path = tmp_path / 'bad.uni'
     with zipfile.ZipFile(path, 'w') as archive:
@@ -118,18 +244,72 @@ def test_invalid_archive_and_no_overwrite(tmp_path):
     assert path.read_bytes() == before
 
 
-def test_legacy_archive_preserves_original_key_derivation(tmp_path):
+def test_legacy_archive_upgrades_to_512000_after_backup(tmp_path):
     path = tmp_path / 'legacy.uni'
     database = tmp_path / 'legacy.db'
-    Vault(database, 'master').close()
+    legacy = Vault(database, 'master')
+    legacy.save(dict(name='Legacy secret', host='localhost', port=22, username='user',
+                     password='remote-secret', identity_file=''))
+    legacy.close()
     with zipfile.ZipFile(path, 'w') as archive:
         archive.write(database, 'database.db')
         archive.writestr('metadata.json', json.dumps(dict(format_version=1, description='Legacy')))
 
+    original = path.read_bytes()
+    with pytest.raises(sqlcipher.DatabaseError):
+        ArchiveVault(path, 'wrong')
+    assert not list(tmp_path.glob('*.backup-*'))
+    assert path.read_bytes() == original
+
     vault = ArchiveVault(path, 'master')
-    assert int(vault.connection.execute('PRAGMA kdf_iter').fetchone()[0]) == 256_000
+    assert int(vault.connection.execute('PRAGMA kdf_iter').fetchone()[0]) == 512_000
+    assert vault.profiles()[0]['password'] == 'remote-secret'
     vault.close()
-    assert metadata(path)['format_version'] == 1
+    assert metadata(path)['format_version'] == 2
+    backup, = tmp_path.glob('*.backup-*-kdf.uni')
+    assert metadata(backup)['format_version'] == 1
+    restored = tmp_path / 'legacy-copy.uni'
+    restore_backup(backup, restored, 'master', is_archive=True)
+    with zipfile.ZipFile(restored) as archive:
+        assert archive.read('database.db') == database.read_bytes()
+    ArchiveVault(path, 'master').close()
+    assert list(tmp_path.glob('*.backup-*-kdf.uni')) == [backup]
+
+
+def test_schema_backup_happens_before_migration(tmp_path, monkeypatch):
+    import remote_manager.storage.archive as storage
+
+    path = tmp_path / 'schema.uni'
+    vault = ArchiveVault(path, 'master', 'Schema', kdf_iterations=512_000)
+    vault.set_inactivity_minutes(7)
+    with vault.connection as connection:
+        connection.execute('ALTER TABLE profiles DROP COLUMN ssh_reconnect_delay')
+        connection.execute('PRAGMA user_version = 17')
+    vault.close()
+    before = path.read_bytes()
+
+    with monkeypatch.context() as patch:
+        def fail(*args):
+            raise OSError('Disk full')
+        patch.setattr(storage, 'publish_copy', fail)
+        with pytest.raises(BackupError):
+            ArchiveVault(path, 'master')
+    assert path.read_bytes() == before
+
+    vault = ArchiveVault(path, 'master')
+    assert vault.connection.execute('PRAGMA user_version').fetchone()[0] == 18
+    assert vault.inactivity_minutes() == 7
+    vault.close()
+    backup, = tmp_path.glob('*.backup-*-schema-17-schema.uni')
+    with zipfile.ZipFile(backup) as saved, zipfile.ZipFile(path) as current:
+        assert saved.read('database.db') != current.read('database.db')
+    restored = tmp_path / 'restored.uni'
+    restore_backup(backup, restored, 'master', is_archive=True)
+    assert restored.read_bytes() == backup.read_bytes()
+    database = tmp_path / 'verify.db'
+    with zipfile.ZipFile(restored) as archive:
+        database.write_bytes(archive.read('database.db'))
+    assert Vault.verify_key(database, 'master', kdf_iterations=512_000) == 17
 
 
 def test_archive_rejects_excessive_key_derivation_cost(tmp_path):
@@ -197,11 +377,14 @@ def test_chooser_inline_unlock_and_back(qtbot, tmp_path):
     chooser.vault.close()
 
 
-def test_chooser_reports_incompatible_schema(qtbot, tmp_path):
+def test_chooser_reports_incompatible_schema_and_restores_backup(qtbot, tmp_path, monkeypatch):
     from remote_manager.ui.databases import DatabaseChooser
 
     path = tmp_path / 'newer.uni'
-    vault = ArchiveVault(path, 'correct password', 'Newer test')
+    restored = tmp_path / 'restored.uni'
+    vault = ArchiveVault(path, 'old password', 'Newer test')
+    vault.change_password('old password', 'correct password')
+    backup, = tmp_path.glob('*.backup-*-password.uni')
     with vault.connection as connection:
         connection.execute('PRAGMA user_version = 999')
     vault.close()
@@ -220,6 +403,15 @@ def test_chooser_reports_incompatible_schema(qtbot, tmp_path):
     assert chooser.vault is None
     assert path.read_bytes() == before
 
+    from remote_manager.ui.dialogs import QFileDialog
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *args, **kw: (str(backup), ''))
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *args, **kw: (str(restored), ''))
+    panel.password.setText('old password')
+    panel.restore_button.click()
+    assert not panel.password.text()
+    assert restored.read_bytes() == backup.read_bytes()
+    assert path.read_bytes() == before
+
 
 def test_chooser_inline_setup_and_close(qtbot, tmp_path):
     from remote_manager.ui.databases import DatabaseChooser
@@ -230,6 +422,8 @@ def test_chooser_inline_setup_and_close(qtbot, tmp_path):
     chooser.open_path(path, 'New test')
     panel = chooser.unlock_panel
     assert panel.password_strength.value() == 0
+    assert panel.kdf.currentData() == 'argon2id'
+    assert not panel.kdf_iterations.isEnabled()
     assert panel.kdf_iterations.value() == 512_000
     for password, level, label in (
         ('abc', 1, 'Weak'),
@@ -251,6 +445,7 @@ def test_chooser_inline_setup_and_close(qtbot, tmp_path):
     assert not chooser.isVisible()
     chooser.open_path(path, 'New test')
     panel = chooser.unlock_panel
+    panel.kdf.setCurrentIndex(panel.kdf.findData('pbkdf2'))
     panel.kdf_iterations.setValue(1_024_000)
     panel.password.setText('new password')
     panel.confirmation.setText('new password')

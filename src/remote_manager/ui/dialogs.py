@@ -1,3 +1,4 @@
+from glob import escape
 from pathlib import Path
 
 from PyQt6.QtCore import QCoreApplication, pyqtSignal, Qt
@@ -5,6 +6,7 @@ from PyQt6.QtGui import QColor, QFont
 from .credentials import CredentialsEditor, CredentialSelector, decorate_buttons
 from .icons import connection_icon, action_icon
 from .icon_picker import IconPicker
+from .key_file import KeyFilePicker
 from .visuals import brand_header, title_label, style_surface
 from .forms import (NamedButtonBox, polish_dialog, primary_action, section,
                     validated_field, require_fields, icon_label)
@@ -15,10 +17,11 @@ from PyQt6.QtWidgets import (QApplication, QButtonGroup, QRadioButton, QFontComb
                             QFormLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QFrame,
                             QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox)
 
-from remote_manager.storage.archive import ArchiveInUse, ArchiveVault, RecoveryConflict
+from remote_manager.storage.archive import ArchiveInUse, ArchiveVault, RecoveryConflict, metadata, restore_backup
 from remote_manager.storage.vault import Vault, SSH_DEFAULTS, resolve_ssh, validate_ssh_settings, validate_group_appearance
 from remote_manager.storage.vault import DEFAULT_KDF_ITERATIONS, MAX_KDF_ITERATIONS, MAX_SSH_RECONNECT_DELAY
-from remote_manager.storage.vault import UnsupportedSchemaVersion
+from remote_manager.storage.kdf import KeyFileError
+from remote_manager.storage.vault import BackupError, UnsupportedSchemaVersion
 from remote_manager.terminal.ssh import ssh_command
 from remote_manager.terminal.private_key import read_imported_key
 from remote_manager.terminal.appearance import DEFAULT_OPTIONS, default_font
@@ -51,12 +54,15 @@ class VaultUnlockPanel(QWidget):
         heading = title_label(self.tr('Set master password') if self.setup else self.tr('Unlock database'))
         layout.addRow(heading)
         name = description or path.stem
+        key_required = False
         if description is None and self.is_archive:
             try:
-                from remote_manager.storage.archive import metadata
-                name = metadata(path)['description']
+                public = metadata(path)
+                name = public['description']
+                key_required = public.get('key_file_required') is True
             except Exception:
                 pass
+        self.key_file_required = key_required
         layout.addRow(title_label(name, size=12))
         destination = QLabel(str(path))
         destination.setTextFormat(Qt.TextFormat.PlainText)
@@ -89,6 +95,11 @@ class VaultUnlockPanel(QWidget):
             self.update_password_strength('')
             layout.addRow(self.tr('Confirm password'), self.confirmation)
             if self.is_archive:
+                self.kdf = QComboBox()
+                self.kdf.addItem('Argon2id', 'argon2id')
+                self.kdf.addItem('PBKDF2', 'pbkdf2')
+                self.kdf.setToolTip(self.tr('Argon2id uses both memory and computation to slow offline password guessing.'))
+                layout.addRow(self.tr('Key derivation'), self.kdf)
                 self.kdf_iterations = QSpinBox()
                 self.kdf_iterations.setRange(DEFAULT_KDF_ITERATIONS, MAX_KDF_ITERATIONS)
                 self.kdf_iterations.setValue(DEFAULT_KDF_ITERATIONS)
@@ -96,14 +107,36 @@ class VaultUnlockPanel(QWidget):
                 self.kdf_iterations.setGroupSeparatorShown(True)
                 self.kdf_iterations.setToolTip(self.tr('Higher values slow down both unlocking and offline password guessing.'))
                 layout.addRow(self.tr('Key derivation iterations'), self.kdf_iterations)
+                self.kdf.currentIndexChanged.connect(
+                    lambda: self.kdf_iterations.setEnabled(self.kdf.currentData() == 'pbkdf2'))
+                self.kdf_iterations.setEnabled(False)
+        self.key_file = None
+        if self.is_archive:
+            self.key_file = KeyFilePicker(self, allow_generate=self.setup, allow_clear=True)
+            label = self.tr('Key file (required)') if key_required else self.tr('Key file (optional)')
+            layout.addRow(QLabel(label))
+            layout.addRow(self.key_file)
+            if self.setup or key_required:
+                warning = QLabel(self.tr('If you lose a required key file, you cannot unlock the database.'))
+                warning.setWordWrap(True)
+                layout.addRow(warning)
         self.show_password = QCheckBox(self.tr('Show password'))
         self.show_password.toggled.connect(self.toggle_password)
         layout.addRow(self.show_password)
         self.error = QLabel()
         self.error.setWordWrap(True)
-        self.error.setFixedHeight(self.error.fontMetrics().lineSpacing() * 3 + 4)
+        self.error.setMinimumHeight(self.error.fontMetrics().lineSpacing() * 3 + 4)
+        self.error.setTextFormat(Qt.TextFormat.PlainText)
+        self.error.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.error.setAccessibleName(self.tr('Unlock error'))
         layout.addRow(self.error)
+        if not self.setup:
+            self.restore_button = QPushButton(action_icon(self, 'Copy'), self.tr('Restore encrypted backup…'))
+            self.restore_button.setToolTip(
+                self.tr('Verify a backup with the password and any key file used when it was created.')
+                if self.is_archive else self.tr('Verify a backup using its master password and save it as a separate database.'))
+            self.restore_button.clicked.connect(self.restore)
+            layout.addRow(self.restore_button)
         self.buttons = NamedButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         decorate_buttons(self.buttons)
         submit = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
@@ -159,8 +192,50 @@ class VaultUnlockPanel(QWidget):
     def clear(self):
         self.password.clear()
         self.confirmation.clear()
+        if self.key_file:
+            self.key_file.clear()
         self.show_password.setChecked(False)
         self.error.clear()
+
+    def restore(self):
+        if not self.password.text():
+            self.error.setText(self.tr('Enter the master password used when the backup was created.'))
+            self.password.setFocus()
+            return
+        suffix = self.path.suffix
+        backups = sorted(self.path.parent.glob(f'{escape(self.path.name)}.backup-*{suffix}'), reverse=True)
+        start = str(backups[0] if backups else self.path.parent)
+        file_filter = self.tr('Encrypted database (*%1)').replace('%1', suffix)
+        source, _ = QFileDialog.getOpenFileName(self, self.tr('Select encrypted backup'), start, file_filter)
+        if not source:
+            return
+        suggested = self.path.with_name(f'{self.path.stem}-restored{suffix}')
+        destination, _ = QFileDialog.getSaveFileName(
+            self, self.tr('Save restored database'), str(suggested), file_filter,
+            options=QFileDialog.Option.DontConfirmOverwrite)
+        if not destination:
+            return
+        path = Path(destination)
+        if path.suffix.lower() != suffix.lower():
+            path = Path(str(path) + suffix)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            restore_backup(source, path, self.password.text(), is_archive=self.is_archive,
+                           key_file=self.key_file.path if self.key_file else None)
+        except FileExistsError:
+            self.error.setText(self.tr('Choose a new filename. Existing databases cannot be overwritten.'))
+        except UnsupportedSchemaVersion:
+            self.error.setText(self.tr('This backup requires a newer version of UniRCm.'))
+        except KeyFileError as error:
+            self.error.setText(self.tr(str(error)))
+        except Exception:
+            self.error.setText(self.tr('Unable to restore the backup. Check its master password, key file and file access.')
+                               if self.is_archive else self.tr('Unable to restore the backup. Check its master password and file access.'))
+        else:
+            self.clear()
+            self.error.setText(self.tr('Backup restored. Open the new database at %1.').replace('%1', str(path)))
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def submit(self):
         if not self.password.text():
@@ -172,8 +247,11 @@ class VaultUnlockPanel(QWidget):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             if self.is_archive:
-                options = {'kdf_iterations': self.kdf_iterations.value()} if self.setup else {}
-                vault = ArchiveVault(self.path, self.password.text(), self.description, **options)
+                options = {}
+                if self.setup and self.kdf.currentData() == 'pbkdf2':
+                    options['kdf_iterations'] = self.kdf_iterations.value()
+                vault = ArchiveVault(self.path, self.password.text(), self.description,
+                                     key_file=self.key_file.path, **options)
             else:
                 vault = Vault(self.path, self.password.text())
                 if self.setup:
@@ -184,10 +262,15 @@ class VaultUnlockPanel(QWidget):
                 self.error.setText(self.tr('The archive has changed. Its encrypted working copy was preserved.'))
             elif isinstance(error, ArchiveInUse):
                 self.error.setText(self.tr('This database is already open. Close it before trying again.'))
+            elif isinstance(error, KeyFileError):
+                self.error.setText(self.tr(str(error)))
+            elif isinstance(error, BackupError):
+                self.error.setText(self.tr('Unable to create a verified encrypted backup. Check disk space and database access.'))
             elif isinstance(error, UnsupportedSchemaVersion):
                 self.error.setText(self.tr('This database requires a compatible version of UniRCm. Open it with the version that last saved it or a newer version.'))
             else:
-                self.error.setText(self.tr('Unable to unlock database. Check the password and database access.'))
+                self.error.setText(self.tr('Unable to unlock database. Check the password, key file and database access.')
+                                   if self.key_file_required else self.tr('Unable to unlock database. Check the password and database access.'))
             self.password.selectAll()
             self.password.setFocus()
             return
@@ -317,7 +400,7 @@ class ProfileDialog(QDialog):
         self.protocol = QComboBox()
         self.protocol.addItem('SSH', 'ssh')
         self.protocol.addItem('RDP — embedded desktop', 'rdp')
-        self.protocol.addItem('VNC — external window', 'vnc')
+        self.protocol.addItem(self.tr('VNC — embedded desktop'), 'vnc')
         self.protocol.addItem('Telnet — unencrypted', 'telnet')
         self.protocol.setCurrentIndex(max(0, self.protocol.findData(self.profile.get('protocol', 'ssh'))))
         self.connect_at_startup = QCheckBox(self.tr('Connect at startup'))

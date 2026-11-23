@@ -2,6 +2,7 @@
 from remote_manager.ssh_options import validate_advanced
 from remote_manager.rdp_options import validate_options as validate_rdp_options
 
+from datetime import datetime, timezone
 import json
 import os
 import uuid
@@ -23,6 +24,7 @@ def validate_kdf_iterations(iterations, *, minimum=LEGACY_KDF_ITERATIONS):
         raise ValueError('Invalid key derivation iteration count.')
 
 
+SCHEMA_VERSION = 18
 MAX_SSH_RECONNECT_DELAY = 600
 
 
@@ -30,8 +32,52 @@ class UnsupportedSchemaVersion(RuntimeError):
     """The vault schema is incompatible with this version of UniRCm."""
 
 
+class BackupError(RuntimeError):
+    """An encrypted backup could not be created or verified."""
+
+
+def check_encrypted_header(source):
+    header = source.read(16)
+    if len(header) != 16 or header == b'SQLite format 3\x00':
+        raise ValueError('Expected an encrypted SQLCipher database.')
+    source.seek(0)
+
+
+def publish_copy(source, destination, verify, *, raw_database=False):
+    """Publish a private, complete copy without replacing an existing file."""
+    destination = Path(destination)
+    with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as output:
+        staging = Path(output.name)
+        try:
+            with Path(source).open('rb') as original:
+                if raw_database:
+                    check_encrypted_header(original)
+                shutil.copyfileobj(original, output)
+            output.flush()
+            os.fsync(output.fileno())
+            verify(staging)
+            os.link(staging, destination)
+            directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            staging.unlink(missing_ok=True)
+
+
+def backup_path(source, reason, schema):
+    timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+    return source.with_name(f'{source.name}.backup-{timestamp}-schema-{schema}-{reason}{source.suffix}')
+
+
 def _configure_encryption(connection, password, iterations):
     validate_kdf_iterations(iterations)
+    if not password or '\x00' in password:
+        raise ValueError('Enter nonempty master passwords without NUL characters.')
+    version = connection.execute('PRAGMA cipher_version').fetchone()
+    if not version or not version[0].startswith('4.'):
+        raise RuntimeError('SQLCipher 4 is required.')
     connection.set_key(password)
     connection.execute('PRAGMA cipher_compatibility = 4')
     connection.execute(f'PRAGMA kdf_iter = {iterations}')
@@ -56,18 +102,18 @@ class Vault:
         os.chmod(path, 0o600)
         self.connection = sqlcipher.connect(str(path))
         try:
-            version = self.connection.execute('PRAGMA cipher_version').fetchone()
-            if not version or not version[0].startswith('4.'):
-                raise RuntimeError('SQLCipher 4 is required.')
             _configure_encryption(self.connection, password, self.kdf_iterations)
             self.connection.execute('SELECT count(*) FROM sqlite_master').fetchone()
-            if self.connection.execute('PRAGMA user_version').fetchone()[0] not in range(19):
+            if self.connection.execute('PRAGMA user_version').fetchone()[0] not in range(SCHEMA_VERSION + 1):
                 raise UnsupportedSchemaVersion('Unsupported database schema version.')
             self.connection.execute('PRAGMA journal_mode = DELETE')
             self.connection.execute('PRAGMA foreign_keys = ON')
             self.connection.execute('PRAGMA secure_delete = ON')
             with self.connection:
                 self.connection.execute('BEGIN IMMEDIATE')
+                schema = self.connection.execute('PRAGMA user_version').fetchone()[0]
+                if schema < SCHEMA_VERSION and path.stat().st_size:
+                    self._backup(password, 'schema', schema)
                 self.connection.execute('''CREATE TABLE IF NOT EXISTS profiles (
                     id INTEGER PRIMARY KEY, name TEXT NOT NULL, host TEXT NOT NULL,
                     port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
@@ -321,9 +367,20 @@ class Vault:
             self.connection.execute("INSERT INTO settings(key,value) VALUES('inactivity_minutes',?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(minutes),))
 
+    def _backup(self, password, reason, schema):
+        try:
+            publish_copy(self.path, backup_path(self.path, reason, schema),
+                         lambda path: self.verify_key(path, password, kdf_iterations=self.kdf_iterations),
+                         raw_database=True)
+        except Exception as error:
+            raise BackupError('Unable to create a verified encrypted backup.') from error
+
     @staticmethod
     def verify_key(path, password, *, kdf_iterations=LEGACY_KDF_ITERATIONS):
-        connection = sqlcipher.connect(str(path))
+        path = Path(path).resolve()
+        with path.open('rb') as database:
+            check_encrypted_header(database)
+        connection = sqlcipher.connect(path.as_uri() + '?mode=ro', uri=True)
         try:
             _configure_encryption(connection, password, kdf_iterations)
             connection.execute('SELECT count(*) FROM sqlite_master').fetchone()
@@ -331,6 +388,7 @@ class Vault:
                 raise RuntimeError('Database integrity verification failed.')
             if connection.execute('PRAGMA cipher_integrity_check').fetchall():
                 raise RuntimeError('Database encryption verification failed.')
+            return connection.execute('PRAGMA user_version').fetchone()[0]
         finally:
             connection.close()
 
@@ -340,7 +398,15 @@ class Vault:
     def _publish_password_change(self):
         pass  # Plain SQLCipher files are already committed at this point.
 
+    def _password_recovery_path(self, candidate):
+        return candidate.with_suffix('.original')
+
     def change_password(self, current, replacement):
+        schema = self._verify_rekey(current, replacement)
+        self._backup(current, 'password', schema)
+        self._replace_encryption(current, replacement, self.kdf_iterations)
+
+    def _verify_rekey(self, current, replacement):
         if not current or not replacement or '\x00' in current or '\x00' in replacement:
             raise ValueError('Enter nonempty master passwords without NUL characters.')
         if current == replacement:
@@ -348,42 +414,49 @@ class Vault:
         if self.connection.in_transaction:
             raise RuntimeError('Finish the current database operation first.')
         try:
-            self.verify_key(self.path, current, kdf_iterations=self.kdf_iterations)
+            return self.verify_key(self.path, current, kdf_iterations=self.kdf_iterations)
         except sqlcipher.DatabaseError:
             raise ValueError('Current master password is incorrect.') from None
+
+    def _replace_encryption(self, current, replacement, iterations):
+        previous_iterations = self.kdf_iterations
         fd, candidate_name = tempfile.mkstemp(prefix='.unircm-rekey-', dir=self.path.parent)
         os.close(fd)
         candidate = Path(candidate_name)
-        recovery = candidate.with_suffix('.original')
+        recovery = self._password_recovery_path(candidate)
         closed = False
         keep_recovery = False
         try:
-            # The application has committed all writes and uses DELETE journals.
-            # Rekey an encrypted staging copy; never rekey the only original.
-            shutil.copyfile(self.path, candidate)
-            connection = sqlcipher.connect(str(candidate))
+            if iterations == previous_iterations:
+                shutil.copyfile(self.path, candidate)
+                connection = sqlcipher.connect(str(candidate))
+                try:
+                    _configure_encryption(connection, current, previous_iterations)
+                    connection.execute('SELECT count(*) FROM sqlite_master').fetchone()
+                    connection.reset_key(replacement)
+                finally:
+                    connection.close()
+            else:
+                self._export_encrypted(candidate, replacement, iterations)
+            self.verify_key(candidate, replacement, kdf_iterations=iterations)
             try:
-                _configure_encryption(connection, current, self.kdf_iterations)
-                connection.execute('SELECT count(*) FROM sqlite_master').fetchone()
-                connection.reset_key(replacement)
-            finally:
-                connection.close()
-            self.verify_key(candidate, replacement, kdf_iterations=self.kdf_iterations)
-            try:
-                self.verify_key(candidate, current, kdf_iterations=self.kdf_iterations)
+                self.verify_key(candidate, current, kdf_iterations=previous_iterations)
             except sqlcipher.DatabaseError:
                 pass
             else:
-                raise RuntimeError('Old master password still opens the candidate database.')
-            # Private temporary recovery material, removed after completion.
+                raise RuntimeError('The previous encryption settings still open the candidate database.')
+            with candidate.open('rb') as staged:
+                os.fsync(staged.fileno())
             os.link(self.path, recovery)
             self.connection.close()
             closed = True
             os.replace(candidate, self.path)
+            self.kdf_iterations = iterations
             self._reopen(replacement)
             self._publish_password_change()
         except Exception:
             if closed:
+                self.kdf_iterations = previous_iterations
                 try:
                     self.connection.close()
                 except Exception:
@@ -399,6 +472,18 @@ class Vault:
             candidate.unlink(missing_ok=True)
             if not keep_recovery:
                 recovery.unlink(missing_ok=True)
+
+    def _export_encrypted(self, candidate, password, iterations):
+        validate_kdf_iterations(iterations)
+        connection = self.connection
+        schema = connection.execute('PRAGMA user_version').fetchone()[0]
+        connection.execute('ATTACH DATABASE ? AS upgraded KEY ?', (str(candidate), password))
+        try:
+            connection.execute(f'PRAGMA upgraded.kdf_iter = {iterations}')
+            connection.execute("SELECT sqlcipher_export('upgraded')").fetchone()
+            connection.execute(f'PRAGMA upgraded.user_version = {schema}')
+        finally:
+            connection.execute('DETACH DATABASE upgraded')
 
     def profile_exists(self, profile_id):
         return self.connection.execute('SELECT 1 FROM profiles WHERE id=?', (profile_id,)).fetchone() is not None

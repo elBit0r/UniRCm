@@ -55,6 +55,17 @@ Text clipboard ready.	Appunti di testo pronti.
 Text clipboard enabled; waiting for the server.	Appunti di testo abilitati; in attesa del server.
 Share text clipboard	Condividi appunti di testo
 Share text only while this desktop has focus. Other clipboard formats and file transfers are disabled.	Condivide solo testo mentre questo desktop ha il focus. Altri formati e trasferimenti di file sono disabilitati.
+VNC — embedded desktop	VNC — desktop integrato
+Connected — VNC desktop	Connesso — desktop VNC
+VNC authentication failed.	Autenticazione VNC non riuscita.
+Unable to reach the VNC server.	Impossibile raggiungere il server VNC.
+The VNC server disconnected or did not respond.	Il server VNC si è disconnesso o non ha risposto.
+This viewer currently requires RFB 3.8.	Il visualizzatore richiede RFB 3.8.
+The server does not offer classic VNC password authentication.	Il server non offre l’autenticazione VNC classica con password.
+Set a password using the shared credential editor before connecting.	Imposta una password nell’editor delle credenziali condivise prima di connetterti.
+View only	Sola visualizzazione
+Disable keyboard and mouse input to the remote desktop.	Disabilita tastiera e mouse per il desktop remoto.
+Close the VNC connection.	Chiude la connessione VNC.
 Fullscreen	Schermo intero
 Exit fullscreen	Esci da schermo intero
 Return to the previous view (Ctrl+Alt+Enter).	Torna alla vista precedente (Ctrl+Alt+Invio).
@@ -397,6 +408,53 @@ No group (root)	Nessun gruppo (radice)
 OpenSSH configuration / agent	Configurazione OpenSSH / agente
 Passwords do not match.	Le password non coincidono.
 Password strength	Robustezza della password
+Key file	File chiave
+Key file (required)	File chiave (obbligatorio)
+Key file (optional)	File chiave (facoltativo)
+Current key file	File chiave attuale
+Use existing file…	Usa un file esistente…
+Generate new key file…	Genera un nuovo file chiave…
+Select key file	Seleziona il file chiave
+Clear	Cancella
+Choose the file used alongside your master password.	Scegli il file da usare insieme alla password principale.
+Save a new 32-byte random key file.	Salva un nuovo file chiave di 32 byte casuali.
+Clear the selected key file.	Rimuovi il file chiave selezionato dal campo.
+Choose a new filename. Existing key files cannot be overwritten.	Scegli un nuovo nome. I file chiave esistenti possono solo essere selezionati.
+Unable to generate the key file. Check file access.	Impossibile generare il file chiave. Controlla i permessi di accesso.
+If you lose a required key file, you cannot unlock the database.	Se perdi un file chiave obbligatorio, perderai l’accesso al database.
+Select the required key file.	Seleziona il file chiave richiesto.
+Choose a nonempty regular key file.	Scegli un file chiave regolare e non vuoto.
+Choose a key file outside the database and its working directory.	Scegli un file chiave separato dal database e dalla sua cartella di lavoro.
+Unable to read the key file.	Impossibile leggere il file chiave.
+Verify a backup with the password and any key file used when it was created.	Verifica un backup con la password e l’eventuale file chiave in uso quando è stato creato.
+Unable to restore the backup. Check its master password, key file and file access.	Impossibile ripristinare il backup. Controlla la password principale, il file chiave e i permessi di accesso.
+Unable to unlock database. Check the password, key file and database access.	Impossibile sbloccare il database. Controlla la password, il file chiave e i permessi di accesso.
+Change vault protection	Modifica la protezione del database
+Change vault protection…	Modifica la protezione del database…
+Change the master password or add, replace or remove a key file.	Cambia la password principale oppure aggiungi, sostituisci o rimuovi un file chiave.
+Keep current key file	Mantieni il file chiave attuale
+Use password only	Usa solo la password
+Replace key file	Sostituisci il file chiave
+Add key file	Aggiungi un file chiave
+Remove key file	Rimuovi il file chiave
+If you lose a required key file, you cannot unlock the database. To change only the key file, leave the new password fields empty.	Se perdi un file chiave obbligatorio, perderai l’accesso al database. Per modificare solo il file chiave, lascia vuoti i campi della nuova password.
+An encrypted backup is saved beside the database. It uses the current master password and any current key file.	Il backup cifrato viene salvato accanto al database e usa la password principale e l’eventuale file chiave attuali.
+Choose or generate a new key file.	Scegli o genera un nuovo file chiave.
+The current master password or key file is incorrect.	La password principale o il file chiave attuale non sono corretti.
+Choose a different key file or master password.	Scegli un file chiave o una password principale diversi.
+Key derivation	Derivazione della chiave
+Argon2id uses both memory and computation to slow offline password guessing.	Argon2id usa memoria e calcolo per rallentare i tentativi di indovinare la password offline.
+Restore encrypted backup…	Ripristina backup cifrato…
+Verify a backup using its master password and save it as a separate database.	Verifica un backup con la sua password principale e salvalo come database separato.
+Enter the master password used when the backup was created.	Inserisci la password principale in uso quando è stato creato il backup.
+Encrypted database (*%1)	Database cifrato (*%1)
+Select encrypted backup	Seleziona backup cifrato
+Save restored database	Salva database ripristinato
+This backup requires a newer version of UniRCm.	Questo backup richiede una versione più recente di UniRCm.
+Unable to restore the backup. Check its master password and file access.	Impossibile ripristinare il backup. Controlla la sua password principale e l’accesso al file.
+Backup restored. Open the new database at %1.	Backup ripristinato. Apri il nuovo database in %1.
+Unable to create a verified encrypted backup. Check disk space and database access.	Impossibile creare un backup cifrato verificato. Controlla lo spazio disponibile e l’accesso al database.
+An encrypted backup is saved beside the database. It uses the current master password.	Il backup cifrato viene salvato accanto al database e usa la password principale attuale.
 Key derivation iterations	Iterazioni di derivazione della chiave
 Higher values slow down both unlocking and offline password guessing.	Valori più alti rallentano lo sblocco e i tentativi offline di indovinare la password.
 Estimates strength from password length and character variety.	Stima la robustezza in base alla lunghezza e alla varietà dei caratteri.

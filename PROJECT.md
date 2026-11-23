@@ -100,9 +100,19 @@ for the current module layout.
 - Install the corresponding public key into the active SSH account's
   `~/.ssh/authorized_keys` through the authenticated session. Confirm the
   destination and fingerprint first, and preserve existing authorizations.
-- Copy a complete `.uni` archive for backup. Restore by opening the copy and
-  unlocking it with its master password. Keep archive publication consistent
-  after committed changes.
+- Before changing the schema version, master password or archive KDF, save and
+  verify an encrypted backup beside the database. Abort the change if backup
+  verification fails. Restore to a separate file using the master password
+  valid when the backup was created and its key file if required. Keep archive
+  publication consistent after committed changes.
+- Portable archives can require an optional key file alongside the master
+  password. Combine the password KDF output and the SHA-256 file digest with
+  HKDF. Store only the key file requirement in public metadata. Generate key
+  files with 32 random bytes and mode `0600`. Adding, removing or replacing a
+  key file uses the verified backup and encrypted-staging rekey workflow.
+- New portable archives default to Argon2id. PBKDF2 remains selectable for new
+  archives that require compatibility. The legacy archive KDF upgrade changes
+  PBKDF2 from 256,000 to 512,000 iterations.
 - If JSON import/export is added, version the format and validate sizes,
   structure, protocols and references. Exclude credentials and secrets from
   plaintext exports and warn that exported connection metadata is readable.

@@ -2,9 +2,8 @@ import socket
 import struct
 import threading
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QImage, QKeyEvent
-from PyQt6.QtCore import QEvent
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt6.QtGui import QKeyEvent, QWheelEvent
 
 from remote_manager.protocols.vnc import VncSession, challenge_response
 
@@ -46,10 +45,12 @@ def test_rfb_frame_input_and_shutdown(qtbot):
                 assert read(1) == b'\x01'
                 conn.sendall(struct.pack('!HH', 2, 1) + bytes(16) + struct.pack('!I', 4) + b'test')
                 assert read(20)[0] == 0
-                assert read(8) == struct.pack('!BBHi', 2, 0, 1, 0)
+                assert read(12) == struct.pack('!BBHii', 2, 0, 2, 0, -223)
                 assert read(10)[0] == 3
-                conn.sendall(b'\0\0\0\x01' + struct.pack('!HHHHi', 0, 0, 2, 1, 0) + b'\xff\0\0\xff\0\xff\0\xff')
+                conn.sendall(b'\0\0\0\x01' + struct.pack('!HHHHi', 0, 0, 2, 1, 0) + b'\xff\0\0\0\0\xff\0\0')
                 assert read(10)[1] == 1
+                conn.sendall(b'\0\0\0\x01' + struct.pack('!HHHHi', 0, 0, 3, 2, -223))
+                assert read(10) == struct.pack('!BBHHHH', 3, 0, 0, 0, 3, 2)
                 while True:
                     kind = read(1)
                     sizes = {b'\x04': 7, b'\x05': 5}
@@ -66,7 +67,7 @@ def test_rfb_frame_input_and_shutdown(qtbot):
     session = VncSession(dict(protocol='vnc', host='127.0.0.1', port=listener.getsockname()[1], password='password'))
     qtbot.addWidget(session)
     try:
-        qtbot.waitUntil(lambda: not session.canvas.image.isNull())
+        qtbot.waitUntil(lambda: session.canvas.image.width() == 3)
         assert session.session_status.state == 'connected'
         assert session.canvas.image.pixelColor(0, 0).red() == 255
         assert session.canvas.image.pixelColor(1, 0).green() == 255
@@ -74,7 +75,18 @@ def test_rfb_frame_input_and_shutdown(qtbot):
         session.canvas.keyReleaseEvent(QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier, 'a'))
         qtbot.waitUntil(lambda: len(received) >= 2)
         assert received[:2] == [struct.pack('!BBHI', 4, 1, 0, 97), struct.pack('!BBHI', 4, 0, 0, 97)]
+        canvas = session.canvas
+        position = QPointF(canvas.target().center())
+        wheel = QWheelEvent(position, position, QPoint(), QPoint(0, 120),
+                            Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                            Qt.ScrollPhase.NoScrollPhase, False)
+        canvas.wheelEvent(wheel)
+        qtbot.waitUntil(lambda: len(received) == 4)
+        assert received[2][:2] == bytes((5, 8))
+        assert received[3] == bytes((5, 0)) + received[2][2:]
         session.set_view_only(True)
+        assert not canvas.update_pointer(wheel)
+
         session.canvas.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_B, Qt.KeyboardModifier.NoModifier, 'b'))
         assert not session.canvas.pressed
     finally:

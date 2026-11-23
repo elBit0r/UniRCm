@@ -1,6 +1,6 @@
 # Development installation
 
-On Linux with Python and virtualenv available:
+On Linux, install Python, virtualenv and the Argon2 runtime library (`libargon2-1` on Debian and Ubuntu):
 
 ```sh
 python3 -m venv .venv

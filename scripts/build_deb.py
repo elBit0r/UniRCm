@@ -174,7 +174,7 @@ def main() -> int:
                 *[f'-e{binary}' for binary in binaries]], cwd=work, text=True)
             native_dependencies = next((line.split('=', 1)[1] for line in result.splitlines() if line.startswith('shlibs:Depends=')), '')
         depends = [f'python3 (>= 3.{python_minor})', f'python3 (<< 3.{python_minor + 1})',
-                   'python3-pyqt6 (>= 6.6)', 'python3-pyqt6.qtsvg', 'openssh-client']
+                   'python3-pyqt6 (>= 6.6)', 'python3-pyqt6.qtsvg', 'openssh-client', 'libargon2-1']
         if native_dependencies:
             depends.append(native_dependencies)
         size = sum(p.stat().st_size for p in stage.rglob('*') if p.is_file())
