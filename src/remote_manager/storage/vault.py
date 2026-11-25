@@ -5,6 +5,7 @@ from remote_manager.rdp_options import validate_options as validate_rdp_options
 from datetime import datetime, timezone
 import json
 import os
+import stat
 import uuid
 import shutil
 import tempfile
@@ -86,25 +87,63 @@ def _configure_encryption(connection, password, iterations):
 
 
 class Vault:
-    def __init__(self, path: Path, password: str, *, kdf_iterations=LEGACY_KDF_ITERATIONS):
-        if not password:
-            raise ValueError('A master password is required.')
+    def __init__(self, path: Path, password: str, *, kdf_iterations=LEGACY_KDF_ITERATIONS,
+                 create=None):
+        if not password or '\x00' in password:
+            raise ValueError('Enter nonempty master passwords without NUL characters.')
         validate_kdf_iterations(kdf_iterations)
         self.kdf_iterations = kdf_iterations
         path = Path(path)
         self.path = path
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        # Reserve new files privately before SQLCipher opens them.
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600) if not path.exists() else None
-        if fd is not None:
-            os.close(fd)
-        os.chmod(path, 0o600)
-        self.connection = sqlcipher.connect(str(path))
+        if create is not True:
+            try:
+                original = path.lstat()
+            except FileNotFoundError:
+                if create is False:
+                    raise
+                create = True
+            else:
+                if not stat.S_ISREG(original.st_mode) or original.st_uid != os.geteuid():
+                    raise PermissionError('Expected a regular database file owned by the current user.')
+                if original.st_size == 0:
+                    raise ValueError('Expected an encrypted SQLCipher database.')
+        if create:
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                original = os.fstat(fd)
+                if stat.S_IMODE(original.st_mode) != 0o600:
+                    os.fchmod(fd, 0o600)
+            finally:
+                os.close(fd)
+        if not os.path.samestat(original, path.lstat()):
+            raise PermissionError('Database file changed while opening.')
+        uri = path.absolute().as_uri() + '?mode=rw'
+        connection = sqlcipher.connect(uri, uri=True)
         try:
-            _configure_encryption(self.connection, password, self.kdf_iterations)
-            self.connection.execute('SELECT count(*) FROM sqlite_master').fetchone()
-            if self.connection.execute('PRAGMA user_version').fetchone()[0] not in range(SCHEMA_VERSION + 1):
+            _configure_encryption(connection, password, self.kdf_iterations)
+            connection.execute('SELECT count(*) FROM sqlite_master').fetchone()
+            if connection.execute('PRAGMA user_version').fetchone()[0] not in range(SCHEMA_VERSION + 1):
                 raise UnsupportedSchemaVersion('Unsupported database schema version.')
+            if not os.path.samestat(original, path.lstat()):
+                raise PermissionError('Database file changed while opening.')
+            if not create and stat.S_IMODE(original.st_mode) != 0o600:
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                try:
+                    if not os.path.samestat(original, os.fstat(fd)):
+                        raise PermissionError('Database file changed while opening.')
+                    os.fchmod(fd, 0o600)
+                finally:
+                    os.close(fd)
+            if not create and not original.st_mode & stat.S_IWUSR:
+                # SQLCipher may have opened the file read-only before fchmod.
+                connection.close()
+                connection = sqlcipher.connect(uri, uri=True)
+                _configure_encryption(connection, password, self.kdf_iterations)
+                connection.execute('SELECT count(*) FROM sqlite_master').fetchone()
+                if not os.path.samestat(original, path.lstat()):
+                    raise PermissionError('Database file changed while opening.')
+            self.connection = connection
             self.connection.execute('PRAGMA journal_mode = DELETE')
             self.connection.execute('PRAGMA foreign_keys = ON')
             self.connection.execute('PRAGMA secure_delete = ON')
@@ -199,7 +238,7 @@ class Vault:
                         self.connection.execute("ALTER TABLE profiles ADD COLUMN ssh_startup_commands TEXT NOT NULL DEFAULT ''")
                     self.connection.execute('PRAGMA user_version = 22')
         except Exception:
-            self.connection.close()
+            connection.close()
             raise
 
     def local_terminal_profiles(self):
@@ -383,6 +422,15 @@ class Vault:
             self.connection.execute("INSERT INTO settings(key,value) VALUES('quick_connect_visible',?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", ('1' if visible else '0',))
 
+    def startup_indicators_visible(self):
+        row = self.connection.execute("SELECT value FROM settings WHERE key='startup_indicators_visible'").fetchone()
+        return not row or row[0] != '0'
+
+    def set_startup_indicators_visible(self, visible):
+        with self.connection:
+            self.connection.execute("INSERT INTO settings(key,value) VALUES('startup_indicators_visible',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", ('1' if visible else '0',))
+
     def set_language(self, language):
         if language not in ('en', 'it'):
             raise ValueError('Unsupported interface language.')
@@ -427,7 +475,8 @@ class Vault:
             connection.close()
 
     def _reopen(self, password):
-        self.connection = Vault(self.path, password, kdf_iterations=self.kdf_iterations).connection
+        self.connection = Vault(self.path, password, kdf_iterations=self.kdf_iterations,
+                                create=False).connection
 
     def _publish_password_change(self):
         pass  # Plain SQLCipher files are already committed at this point.

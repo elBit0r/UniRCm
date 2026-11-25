@@ -13,6 +13,7 @@ def test_legacy_vault_preserves_shared_directory_permissions(tmp_path, password)
     path = directory / 'legacy.db'
     Vault(path, 'master').close()
     directory.chmod(0o755)
+    path.chmod(0o644)
 
     if password == 'master':
         Vault(path, password).close()
@@ -21,7 +22,49 @@ def test_legacy_vault_preserves_shared_directory_permissions(tmp_path, password)
             Vault(path, password)
 
     assert stat.S_IMODE(directory.stat().st_mode) == 0o755
+    assert stat.S_IMODE(path.stat().st_mode) == (0o600 if password == 'master' else 0o644)
+
+
+def test_vault_rejects_symlink_without_changing_target_permissions(tmp_path):
+    target = tmp_path / 'target.db'
+    Vault(target, 'master').close()
+    target.chmod(0o644)
+    path = tmp_path / 'link.db'
+    path.symlink_to(target)
+
+    with pytest.raises(OSError):
+        Vault(path, 'master')
+
+    assert path.is_symlink()
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+
+
+def test_vault_can_write_after_unlocking_owner_read_only_file(tmp_path):
+    path = tmp_path / 'vault.db'
+    Vault(path, 'master').close()
+    path.chmod(0o400)
+
+    vault = Vault(path, 'master')
+    try:
+        vault.set_language('it')
+    finally:
+        vault.close()
+
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_vault_requires_new_path_for_creation_and_existing_file_for_unlock(tmp_path):
+    path = tmp_path / 'vault.db'
+    with pytest.raises(FileNotFoundError):
+        Vault(path, 'master', create=False)
+    assert not path.exists()
+
+    path.touch()
+    with pytest.raises(FileExistsError):
+        Vault(path, 'master', create=True)
+    with pytest.raises(ValueError, match='encrypted SQLCipher'):
+        Vault(path, 'master', create=False)
+    assert path.stat().st_size == 0
 
 
 def test_encrypted_profile_crud_and_unlock(tmp_path):

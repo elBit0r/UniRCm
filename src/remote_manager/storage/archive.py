@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import stat
 import tempfile
+from uuid import uuid4
 import zipfile
 
 from .kdf import KeyFileError, archive_passphrase, keyed_archive_passphrase
@@ -20,11 +21,26 @@ KEEP_KEY_FILE = object()
 
 
 class RecoveryConflict(ValueError):
-    """The archive was replaced while a working copy was left behind."""
+    """The archive no longer matches the encrypted working copy."""
+
+    def __init__(self, message, *, preserved_path=None, archive_copy=False):
+        super().__init__(message)
+        self.preserved_path = preserved_path
+        self.archive_copy = archive_copy
 
 
 class ArchiveInUse(BlockingIOError):
     """Another open vault holds the archive lock."""
+
+
+class ArchiveCloseError(OSError):
+    """The vault closed, but publication or working-directory cleanup failed."""
+
+    def __init__(self, working_path, *, publication_failed):
+        super().__init__('Unable to finish saving the archive.' if publication_failed
+                         else 'Unable to remove the encrypted working directory.')
+        self.working_path = working_path
+        self.publication_failed = publication_failed
 
 
 def metadata(path):
@@ -111,6 +127,8 @@ class ArchiveVault(Vault):
         self._working = self.archive_path.with_name('.' + self.archive_path.name + '.working')
         self._database = self._working / 'database.db'
         self._archive_digest = None
+        self._publication_conflict = None
+        self.on_conflict = None
         self._closed = False
         creating = False
         lock_fd = os.open(str(self.archive_path) + '.lock',
@@ -158,14 +176,14 @@ class ArchiveVault(Vault):
                 if self._database.exists():
                     raise FileExistsError('An encrypted working copy already exists.')
                 creating = True
-            super().__init__(self._database, key, kdf_iterations=kdf_iterations)
+            super().__init__(self._database, key, kdf_iterations=kdf_iterations, create=creating)
             if description is not None:
                 self.verify_key(self._database, key, kdf_iterations=kdf_iterations)
             if self.metadata['format_version'] == 1:
                 self._upgrade_legacy(key)
             else:
                 self._persist()
-                self.connection = PersistingConnection(self.connection, self._persist)
+                self.connection = PersistingConnection(self.connection, self._persist, self._check_conflict)
             for pattern in ('stage-*', 'publish-*', '.unircm-rekey-*'):
                 for leftover in self._working.glob(pattern):
                     leftover.unlink()
@@ -173,7 +191,10 @@ class ArchiveVault(Vault):
             try:
                 if hasattr(self, 'connection'):
                     self.connection.close()
-                if creating and not self.archive_path.exists():
+                if self._publication_conflict is not None:
+                    if self._publication_conflict.archive_copy:
+                        shutil.rmtree(self._working)
+                elif creating and not self.archive_path.exists():
                     shutil.rmtree(self._working)
             finally:
                 self._lock.close()
@@ -270,6 +291,7 @@ class ArchiveVault(Vault):
         return self.metadata['format_version'] == 4
 
     def change_password(self, current, replacement, *, key_file=None, new_key_file=KEEP_KEY_FILE):
+        self._check_conflict()
         if new_key_file is KEEP_KEY_FILE:
             new_key_file = key_file if self.key_file_required else None
         self._check_key_file_path(key_file)
@@ -288,8 +310,48 @@ class ArchiveVault(Vault):
             self.metadata = previous
             raise
 
+    def _check_conflict(self):
+        if self._publication_conflict is not None:
+            # Avoid retaining a raised exception and its stack on the vault.
+            conflict = self._publication_conflict
+            raise RecoveryConflict(str(conflict), preserved_path=conflict.preserved_path,
+                                   archive_copy=conflict.archive_copy)
+
+    def _matches_published_archive(self):
+        try:
+            with self.archive_path.open('rb') as source:
+                before = os.fstat(source.fileno())
+                digest = hashlib.file_digest(source, 'sha256').hexdigest()
+                after = self.archive_path.stat()
+        except FileNotFoundError:
+            return False
+        return (digest == self._archive_digest and os.path.samestat(before, after)
+                and (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                == (after.st_size, after.st_mtime_ns, after.st_ctime_ns))
+
+    def _preserve_conflict(self, staged):
+        copy = self.archive_path.with_name(f'{self.archive_path.stem}.conflict-{uuid4().hex}.uni')
+        try:
+            os.link(staged, copy)
+            directory = os.open(copy.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        except OSError:
+            conflict = RecoveryConflict('The archive changed externally. The encrypted working copy was preserved.',
+                                        preserved_path=Path(staged))
+        else:
+            conflict = RecoveryConflict('The archive changed externally. Local changes were saved in a separate encrypted archive.',
+                                        preserved_path=copy, archive_copy=True)
+        self._publication_conflict = conflict
+        if self.on_conflict is not None:
+            self.on_conflict(conflict)
+        self._check_conflict()
+
     def _persist(self):
-        fd, name = tempfile.mkstemp(prefix='publish-', dir=self._working)
+        self._check_conflict()
+        fd, name = tempfile.mkstemp(prefix='publish-', suffix='.uni', dir=self._working)
         try:
             with os.fdopen(fd, 'w+b') as output:
                 self._write_archive(output, self._database)
@@ -298,13 +360,25 @@ class ArchiveVault(Vault):
                 output.seek(0)
                 digest = hashlib.file_digest(output, 'sha256').hexdigest()
             self._write_recovery_digests(self._archive_digest, digest)
-            os.replace(name, self.archive_path)
+            if self._archive_digest is None:
+                try:
+                    os.link(name, self.archive_path)
+                except FileExistsError:
+                    self._preserve_conflict(name)
+            else:
+                # The vault lock coordinates UniRCm writers. A synchronizer can
+                # still replace the file between this check and the rename.
+                if not self._matches_published_archive():
+                    self._preserve_conflict(name)
+                os.replace(name, self.archive_path)
             self._archive_digest = digest
         finally:
-            if os.path.exists(name):
-                os.unlink(name)
+            staged = Path(name)
+            if self._publication_conflict is None or self._publication_conflict.preserved_path != staged:
+                staged.unlink(missing_ok=True)
 
     def set_description(self, description):
+        self._check_conflict()
         if not isinstance(description, str) or len(description.encode('utf-8')) > 12000:
             raise ValueError('Database description is too large.')
         previous = self.metadata
@@ -317,7 +391,7 @@ class ArchiveVault(Vault):
 
     def _reopen(self, password):
         super()._reopen(password)
-        self.connection = PersistingConnection(self.connection, self._persist)
+        self.connection = PersistingConnection(self.connection, self._persist, self._check_conflict)
 
     def _publish_password_change(self):
         self._persist()
@@ -325,24 +399,36 @@ class ArchiveVault(Vault):
     def close(self):
         if self._closed:
             return
-        # Retry a failed archive write before releasing the working copy.
-        if self.connection.in_transaction:
-            self.connection.rollback()
-        self._persist()
+        publication_error = None
+        try:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            self._persist()
+        except RecoveryConflict:
+            pass  # The callback reports the conflict and the encrypted data is preserved.
+        except Exception as error:
+            publication_error = error
         super().close()
         self._closed = True
         try:
-            self._database.unlink()
-            shutil.rmtree(self._working)
+            if publication_error is not None:
+                raise ArchiveCloseError(self._working, publication_failed=True) from publication_error
+            if self._publication_conflict is None or self._publication_conflict.archive_copy:
+                try:
+                    shutil.rmtree(self._working)
+                except OSError as error:
+                    raise ArchiveCloseError(self._working, publication_failed=False) from error
         finally:
+            self.on_conflict = None
             self._lock.close()
 
 
 class PersistingConnection:
     """Publish each committed mutation before the UI reports success."""
-    def __init__(self, connection, persist):
+    def __init__(self, connection, persist, check_conflict):
         object.__setattr__(self, '_connection', connection)
         object.__setattr__(self, '_persist', persist)
+        object.__setattr__(self, '_check_conflict', check_conflict)
 
     def __getattr__(self, name):
         return getattr(self._connection, name)
@@ -351,6 +437,7 @@ class PersistingConnection:
         setattr(self._connection, name, value)
 
     def __enter__(self):
+        self._check_conflict()
         return self._connection.__enter__()
 
     def __exit__(self, *exc):

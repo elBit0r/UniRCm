@@ -96,6 +96,37 @@ def test_toolbar_modes_and_persistence(qtbot, tmp_path):
     window.close()
 
 
+def test_startup_indicators_in_view_menu(qtbot, tmp_path):
+    window = make_window(qtbot, tmp_path)
+    automatic = window.vault.save(dict(PROFILE, name='Automatic', connect_at_startup=True))
+    window.vault.save(dict(PROFILE, name='Manual'))
+    window.vault.save_folder('Group')
+    window.refresh()
+    markers = window.actions['Startup indicators']
+    assert markers in window.menus['View'].actions()
+    assert markers.isChecked() and not window.tree.isColumnHidden(1)
+    items = {item.text(0): item for item in window.tree_items()}
+    assert not items['Automatic'].icon(0).isNull()
+    assert not items['Automatic'].icon(1).isNull()
+    assert items['Automatic'].toolTip(1) == 'Connect at startup'
+    assert items['Manual'].icon(1).isNull()
+    assert items['Group'].icon(1).isNull()
+
+    window.tree.setCurrentItem(items['Automatic'])
+    markers.trigger()
+    assert window.tree.isColumnHidden(1)
+    assert window.tree.currentItem() is items['Automatic']
+    assert window.vault.profiles(automatic)[0]['connect_at_startup']
+    window.close()
+
+    window = make_window(qtbot, tmp_path)
+    markers = window.actions['Startup indicators']
+    assert not markers.isChecked() and window.tree.isColumnHidden(1)
+    markers.trigger()
+    assert markers.isChecked() and not window.tree.isColumnHidden(1)
+    window.close()
+
+
 def test_quick_connect_toolbar(qtbot, tmp_path, monkeypatch):
     window = make_window(qtbot, tmp_path)
     toolbar = window.quick_connect_toolbar
@@ -228,10 +259,14 @@ def test_file_new_database_creates_real_archive(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(databases, 'QSettings', lambda: QSettings(str(tmp_path / 'recent.ini'), QSettings.Format.IniFormat))
     monkeypatch.setattr(QInputDialog, 'getText', lambda *a: ('Menu database', True))
     monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a: (str(path), ''))
+    def dismiss_warning():
+        warning = QApplication.activeModalWidget()
+        warning.button(QMessageBox.StandardButton.Ok).click()
     def unlock():
         panel = QApplication.activeModalWidget().unlock_panel
         panel.password.setText('new-master')
         panel.confirmation.setText('new-master')
+        QTimer.singleShot(0, dismiss_warning)
         panel.buttons.button(QDialogButtonBox.StandardButton.Ok).click()
     QTimer.singleShot(50, unlock)
     window.actions['New database'].trigger()

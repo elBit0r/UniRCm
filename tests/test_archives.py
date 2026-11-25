@@ -11,6 +11,105 @@ from remote_manager.storage.kdf import KeyFileError, generate_key_file
 from remote_manager.storage.vault import BackupError, Vault
 
 
+@pytest.mark.parametrize('shutdown', [False, True], ids=['autolock', 'shutdown'])
+def test_archive_close_recovers_after_publication_failure(qtbot, tmp_path, monkeypatch, shutdown):
+    import errno
+    import os
+    from PyQt6.QtWidgets import QMessageBox
+    from remote_manager.ui.main_window import MainWindow
+
+    path = tmp_path / 'work.uni'
+    vault = ArchiveVault(path, 'test-master', 'Work')
+    window = MainWindow(vault, path)
+    qtbot.addWidget(window)
+    window.show()
+    original = path.read_bytes()
+    replace = os.replace
+    warnings = []
+
+    def fail_publication(source, destination):
+        if destination == path:
+            raise OSError(errno.ENOSPC, 'Disk full')
+        return replace(source, destination)
+
+    def read_warning(dialog):
+        assert window.vault is None
+        with pytest.raises(sqlcipher.ProgrammingError):
+            vault.connection.execute('SELECT 1')
+        if shutdown:
+            assert not window.isVisible()
+        else:
+            assert window.unlock_panel is not None
+        warnings.append(dialog.text())
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, 'replace', fail_publication)
+        patch.setattr(QMessageBox, 'exec', read_warning)
+        with pytest.raises(OSError, match='Disk full'):
+            vault.set_inactivity_minutes(7)
+        if shutdown:
+            assert window.close()
+        else:
+            window.inactivity_limit = 1
+            window.last_activity -= 2
+            window.check_inactivity()
+            qtbot.waitUntil(lambda: bool(warnings))
+
+    assert len(warnings) == 1
+    assert str(vault.path.parent) in warnings[0]
+    assert path.read_bytes() == original
+    assert vault.path.is_file()
+    if shutdown:
+        recovered = ArchiveVault(path, 'test-master')
+    else:
+        window.unlock_panel.password.setText('test-master')
+        window.unlock_panel.submit()
+        recovered = window.vault
+    assert recovered.inactivity_minutes() == 7
+    if shutdown:
+        recovered.close()
+    else:
+        window.close()
+    assert not vault.path.parent.exists()
+
+
+def test_external_archive_replacement_preserves_both_versions_and_warns(qtbot, tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+    from remote_manager.ui.main_window import MainWindow
+
+    path = tmp_path / 'work.uni'
+    external_path = tmp_path / 'external.uni'
+    external = ArchiveVault(external_path, 'test-master', 'External')
+    external.set_inactivity_minutes(12)
+    external.close()
+    external_bytes = external_path.read_bytes()
+    vault = ArchiveVault(path, 'test-master', 'Local')
+    window = MainWindow(vault, path)
+    qtbot.addWidget(window)
+    warnings = []
+    monkeypatch.setattr(QMessageBox, 'exec', lambda dialog: warnings.append(dialog.text()))
+
+    external_path.replace(path)
+    with pytest.raises(RecoveryConflict) as raised:
+        vault.set_inactivity_minutes(7)
+    snapshot = raised.value.preserved_path
+    qtbot.waitUntil(lambda: bool(warnings))
+    assert str(snapshot) in warnings[0]
+    assert snapshot != path and snapshot.stat().st_mode & 0o777 == 0o600
+    assert path.read_bytes() == external_bytes
+    with pytest.raises(RecoveryConflict):
+        vault.set_inactivity_minutes(8)
+    window.close()
+    assert path.read_bytes() == external_bytes
+    assert len(warnings) == 1
+    assert not vault.path.parent.exists()
+    for candidate, description, minutes in ((path, 'External', 12), (snapshot, 'Local', 7)):
+        reopened = ArchiveVault(candidate, 'test-master')
+        assert reopened.metadata['description'] == description
+        assert reopened.inactivity_minutes() == minutes
+        reopened.close()
+
+
 def test_archive_encryption_isolation_and_lock(tmp_path):
     first = tmp_path / 'work.uni'
     second = tmp_path / 'home.uni'
@@ -343,12 +442,15 @@ def test_chooser_lists_locations_and_forgets_without_deleting(qtbot, tmp_path, m
     assert path.exists()
 
 
-def test_chooser_inline_unlock_and_back(qtbot, tmp_path):
-    from PyQt6.QtWidgets import QDialog
-    from remote_manager.ui.databases import DatabaseChooser
+def test_chooser_inline_unlock_and_back(qtbot, tmp_path, monkeypatch):
+    from PyQt6.QtCore import QSettings, QTimer
+    from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
+    from remote_manager.ui import databases
+    monkeypatch.setattr(databases, 'QSettings',
+                        lambda: QSettings(str(tmp_path / 'recent.ini'), QSettings.Format.IniFormat))
     path = tmp_path / 'inline.uni'
     vault = ArchiveVault(path, 'correct password', 'Inline test')
-    chooser = DatabaseChooser(tmp_path / 'missing.db')
+    chooser = databases.DatabaseChooser(tmp_path / 'missing.db')
     qtbot.addWidget(chooser)
     chooser.show()
     chooser.open_path(path)
@@ -373,6 +475,10 @@ def test_chooser_inline_unlock_and_back(qtbot, tmp_path):
     chooser.open_path(path)
     panel = chooser.unlock_panel
     panel.password.setText('correct password')
+    def dismiss_warning():
+        warning = QApplication.activeModalWidget()
+        warning.button(QMessageBox.StandardButton.Ok).click()
+    QTimer.singleShot(0, dismiss_warning)
     panel.submit()
     assert chooser.result() == QDialog.DialogCode.Accepted
     assert chooser.path == path

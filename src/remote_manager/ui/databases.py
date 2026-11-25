@@ -1,4 +1,6 @@
-"""Startup database chooser; only public file locations enter QSettings."""
+"""Startup database chooser with local first-open acknowledgements."""
+from hashlib import sha256
+from os import fsencode
 from pathlib import Path
 from PyQt6.QtCore import QDateTime, QLocale, QSettings, Qt
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTreeWidget,
@@ -7,8 +9,13 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTreeWidget,
 from .dialogs import VaultUnlockPanel
 from .icons import action_icon
 from .key_file import remember_key_file
+from .language import translation
 from .visuals import brand_header, title_label, style_surface
 from remote_manager.storage.archive import metadata
+
+
+def _opened_vault_setting(path):
+    return 'databases/opened/' + sha256(fsencode(path.resolve())).hexdigest()
 
 
 class DatabaseChooser(QDialog):
@@ -20,6 +27,7 @@ class DatabaseChooser(QDialog):
         self.excluded_path = Path(excluded_path).resolve() if excluded_path else None
         self.vault = None
         self.path = None
+        self.allow_startup_connections = False
         self.settings = QSettings()
         paths = self.settings.value('databases/recent', [], type=list)
         if legacy_path.exists() and str(legacy_path) not in paths:
@@ -115,6 +123,7 @@ class DatabaseChooser(QDialog):
         item = self.tree.currentItem()
         if item:
             path = Path(item.text(1))
+            self.settings.remove(_opened_vault_setting(path))
             if path.suffix.lower() == '.uni':
                 remember_key_file(path, None)
             self.tree.takeTopLevelItem(self.tree.indexOfTopLevelItem(item))
@@ -178,8 +187,42 @@ class DatabaseChooser(QDialog):
                    for i in range(self.tree.topLevelItemCount())):
             self.add_path(path)
         self.remember()
+        self.allow_startup_connections = self.check_first_open(path, vault)
         self.path, self.vault = path, vault
         self.accept()
+
+    def check_first_open(self, path, vault):
+        key = _opened_vault_setting(path)
+        # SQLCipher's public header salt survives ordinary edits and distinguishes
+        # independently created databases placed at the same path.
+        try:
+            with vault.path.open('rb') as source:
+                salt = source.read(16)
+        except OSError:
+            salt = b''
+        fingerprint = salt.hex() if len(salt) == 16 else ''
+        if fingerprint and self.settings.value(key, '', type=str) == fingerprint:
+            return True
+
+        language = vault.language()
+        warning = QMessageBox(self)
+        warning.setIcon(QMessageBox.Icon.Warning)
+        warning.setWindowTitle(translation('First database opening', language))
+        warning.setTextFormat(Qt.TextFormat.PlainText)
+        warning.setText(translation(
+            'Automatic connections are skipped the first time you open this database. '
+            'Check each connection’s Commands tab for local and remote commands before connecting. '
+            'Disable Connect at startup for any profile you do not want to run automatically next time.',
+            language))
+        warning.setStandardButtons(QMessageBox.StandardButton.Ok)
+        button = warning.button(QMessageBox.StandardButton.Ok)
+        button.setText(translation('OK', language))
+        button.setIcon(action_icon(warning, 'OK'))
+        button.setToolTip(translation('Acknowledge the first-opening warning.', language))
+        warning.exec()
+        if fingerprint and warning.clickedButton() is button:
+            self.settings.setValue(key, fingerprint)
+        return False
 
     def open_selected(self):
         item = self.tree.currentItem()
@@ -188,9 +231,10 @@ class DatabaseChooser(QDialog):
 
     def browse(self):
         name, _ = QFileDialog.getOpenFileName(self, self.tr('Open database'), '',
-                                               'UniRCm (*.uni);;Legacy SQLCipher (*.db)')
+                                               'UniRCm (*.uni);;Legacy SQLCipher (*.db)',
+                                               options=QFileDialog.Option.DontResolveSymlinks)
         if name:
-            self.open_path(Path(name).resolve())
+            self.open_path(Path(name))
 
     def create(self):
         description, ok = QInputDialog.getText(self, self.tr('New database'),

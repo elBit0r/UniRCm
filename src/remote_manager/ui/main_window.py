@@ -5,15 +5,17 @@ from PyQt6.sip import isdeleted
 
 from PyQt6.QtCore import Qt, QEvent, QSize, QTimer, pyqtSignal, QPointF
 from PyQt6.QtGui import QAction, QActionGroup, QColor, QKeySequence, QShortcut, QPainter
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QSpinBox, QSplitter, QSplitterHandle, QStyle, QStyleOptionToolButton, QStylePainter, QWidget, QVBoxLayout,
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDialog, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QSpinBox, QSplitter, QSplitterHandle, QStyle, QStyleOptionToolButton, QStylePainter, QWidget, QVBoxLayout,
                             QMenu, QInputDialog, QTabWidget, QToolButton, QHBoxLayout, QSizePolicy, QTreeWidget, QTreeWidgetItem, QDialogButtonBox)
 
 from remote_manager import APP_SHORT_NAME, APP_NAME, __version__
 from remote_manager.protocols.validation import validate_profile
+from remote_manager.storage.archive import ArchiveCloseError, ArchiveVault
 from remote_manager.terminal.public_key import public_key_from_private
 from remote_manager.terminal.ssh import Terminal
 from remote_manager.terminal.telnet import validate_profile as validate_telnet_profile
-from .dialogs import TerminalAppearanceDialog, GroupDefaultsDialog, LocalTerminalProfileDialog, ProfileDialog, VaultUnlockPanel
+from .dialogs import (TerminalAppearanceDialog, GroupDefaultsDialog, LocalTerminalProfileDialog,
+                      ProfileDialog, VaultUnlockPanel, archive_conflict_message)
 from .settings import SettingsDialog
 from .visuals import brand_header, style_surface, contrast_workspace
 from .language import set_language
@@ -99,9 +101,11 @@ class ConnectionTree(QTreeWidget):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, vault, database_path):
+    def __init__(self, vault, database_path, *, allow_startup_connections=False):
         super().__init__()
         self.vault = vault
+        self._archive_conflicts = []
+        self.watch_archive(vault)
         self._tree_clipboard = None
         self.unlock_panel = None
         set_language(vault.language())
@@ -114,7 +118,13 @@ class MainWindow(QMainWindow):
         self.tree.setStyleSheet('QTreeWidget::item { padding-top: 5px; padding-bottom: 5px; }')
         self.tree.setUniformRowHeights(True)
         self.tree.setFrameShape(QTreeWidget.Shape.NoFrame)
-        self.tree.setHeaderLabels([self.tr('Remote')])
+        self.tree.setHeaderLabels([self.tr('Remote'), ''])
+        header = self.tree.header()
+        header.setSectionsMovable(False)
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(1, 30)
         self.tree.setToolTip(self.tr('Drag above or below an item to reorder; drop onto a group to move inside it.'))
         self.tree.itemDoubleClicked.connect(lambda *_: self.connect_profile())
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -254,7 +264,8 @@ class MainWindow(QMainWindow):
         self.idle_timer.timeout.connect(self.check_inactivity)
         self.idle_timer.start(1000)
         QApplication.instance().installEventFilter(self)
-        QTimer.singleShot(0, self.connect_startup_profiles)
+        if allow_startup_connections:
+            QTimer.singleShot(0, lambda: self.connect_startup_profiles(vault))
 
     def add_quick_connect_toolbar(self):
         self.addToolBarBreak()
@@ -307,9 +318,8 @@ class MainWindow(QMainWindow):
             return
         self.open_profile(profile)
 
-    def connect_startup_profiles(self):
-        vault = self.vault
-        if vault is None or self._locking:
+    def connect_startup_profiles(self, vault):
+        if self.vault is not vault or self._locking:
             return
         for profile in vault.profiles():
             if self.vault is not vault or self._locking:
@@ -392,6 +402,14 @@ class MainWindow(QMainWindow):
         tree_toggle.toggled.connect(self.set_tree_visible)
         self.menus['View'].addAction(tree_toggle)
         self.actions['Connection tree'] = tree_toggle
+        startup_markers = QAction(action_icon(self, 'Startup indicators'),
+                                  self.tr('Startup indicators'), self)
+        startup_markers.setIconVisibleInMenu(True)
+        startup_markers.setCheckable(True)
+        startup_markers.setToolTip(self.tr('Show or hide indicators for connections that start automatically.'))
+        startup_markers.triggered.connect(self.save_startup_indicator_visibility)
+        self.menus['View'].addAction(startup_markers)
+        self.actions['Startup indicators'] = startup_markers
         local_toggle = QAction(action_icon(self, 'New local terminal'), self.tr('Local profiles'), self)
         local_toggle.setIconVisibleInMenu(True)
         local_toggle.setCheckable(True)
@@ -757,6 +775,20 @@ class MainWindow(QMainWindow):
             return
         self.quick_connect_toolbar.setVisible(visible)
 
+    def apply_startup_indicator_visibility(self, visible):
+        self.actions['Startup indicators'].setChecked(visible)
+        self.tree.setColumnHidden(1, not visible)
+
+    def save_startup_indicator_visibility(self, visible):
+        try:
+            self.vault.set_startup_indicators_visible(visible)
+        except Exception:
+            self.actions['Startup indicators'].setChecked(not visible)
+            QMessageBox.warning(self, self.tr('Save failed'),
+                                self.tr('Unable to save startup indicator visibility.'))
+            return
+        self.apply_startup_indicator_visibility(visible)
+
     def save_toolbar_mode(self, action):
         mode = action.data()
         if mode == self._toolbar_mode or self.vault is None:
@@ -784,19 +816,20 @@ class MainWindow(QMainWindow):
         chooser.vault = None
         chooser.deleteLater()
         if not self.confirm_disconnect():
-            replacement.close()
+            self.show_archive_close_error(self.close_vault(replacement))
             return
         self.save_tree_state()
         self.dismiss_editors()
         while self.tabs.count():
             self.close_tab(0, confirm=False)
         try:
-            self.vault.close()
+            close_error = self.close_vault(self.vault)
         except Exception:
-            replacement.close()
+            self.show_archive_close_error(self.close_vault(replacement))
             QMessageBox.warning(self, self.tr('Database switch failed'), self.tr('Unable to close the current encrypted database.'))
             return
         self.vault, self.database_path = replacement, path
+        self.watch_archive(replacement)
         self._tree_clipboard = None
         set_language(self.vault.language())
         self.apply_toolbar_mode(self.vault.toolbar_mode())
@@ -811,6 +844,7 @@ class MainWindow(QMainWindow):
         self.last_activity = monotonic()
         self.refresh()
         self.restore_tree_state()
+        self.show_archive_close_error(close_error)
 
     def database_settings(self):
         SettingsDialog(self.vault, self).exec()
@@ -877,6 +911,8 @@ class MainWindow(QMainWindow):
             return
         self.refresh_local_profiles()
         self.tree.setHeaderLabels([self.tr('Remote')])
+        visible = self.vault.startup_indicators_visible()
+        self.apply_startup_indicator_visibility(visible)
         restoring = self._restoring_tree
         self._restoring_tree = True
         previous = self.item_key(self.tree.currentItem())
@@ -904,6 +940,7 @@ class MainWindow(QMainWindow):
             parent = items.get(folder['parent_id'])
             item = items[folder['id']]
             (parent.addChild if parent else self.tree.addTopLevelItem)(item)
+        startup_icon = action_icon(self, 'Startup indicators')
         for profile in self.vault.profiles():
             item = ConnectionItem([profile['name']])
             position = positions.get(('profile', profile['id']))
@@ -914,6 +951,10 @@ class MainWindow(QMainWindow):
                 font.setItalic(True)
                 item.setFont(0, font)
             item.setIcon(0, connection_icon(profile.get('icon', 'terminal'), self.palette()))
+            if profile.get('connect_at_startup'):
+                item.setIcon(1, startup_icon)
+                item.setToolTip(1, self.tr('Connect at startup'))
+                item.setData(1, Qt.ItemDataRole.AccessibleTextRole, self.tr('Connect at startup'))
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsDropEnabled)
             effective = self.vault.effective_profile(profile)
             item.setToolTip(0, f"{effective.get('protocol', 'ssh').upper()} — {effective['username']}@{effective['host']}:{effective['port']}")
@@ -1665,7 +1706,7 @@ class MainWindow(QMainWindow):
         self._filter_selection = None
         self.tree.clear()
         self.local_tree.clear()
-        self.vault.close()
+        close_error = self.close_vault(self.vault)
         self.vault = None
         self._locked_workspace = self.takeCentralWidget()
         self._locked_workspace.setParent(self)
@@ -1696,9 +1737,55 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(page)
         self.show()
         panel.password.setFocus()
+        self.show_archive_close_error(close_error)
+
+    @staticmethod
+    def close_vault(vault):
+        try:
+            vault.close()
+        except ArchiveCloseError as error:
+            return error
+        return None
+
+    def show_archive_close_error(self, error):
+        if error is None:
+            return
+        if error.publication_failed:
+            text = self.tr('The database was closed. Changes could not be saved to the archive. '
+                           'The encrypted working copy was kept. Reopen the database to retry saving.')
+        else:
+            text = self.tr('The database was closed and saved. The encrypted working directory could not be removed.')
+        self.show_archive_warning(self.tr('Archive close warning'), f'{text}\n\n{error.working_path}')
+
+    def watch_archive(self, vault):
+        if isinstance(vault, ArchiveVault):
+            vault.on_conflict = self.queue_archive_conflict
+
+    def queue_archive_conflict(self, error):
+        self._archive_conflicts.append(error)
+        QTimer.singleShot(0, self.show_archive_conflicts)
+
+    def show_archive_conflicts(self):
+        while self._archive_conflicts:
+            error = self._archive_conflicts.pop(0)
+            self.show_archive_warning(self.tr('Archive conflict'), archive_conflict_message(error))
+
+    def show_archive_warning(self, title, text):
+        message = QMessageBox(QApplication.activeModalWidget() or self)
+        message.setWindowTitle(title)
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setTextFormat(Qt.TextFormat.PlainText)
+        message.setText(text)
+        message.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        message.setStandardButtons(QMessageBox.StandardButton.Ok)
+        button = message.button(QMessageBox.StandardButton.Ok)
+        button.setIcon(action_icon(self, 'OK'))
+        button.setToolTip(self.tr('Dismiss the archive warning.'))
+        message.exec()
 
     def finish_unlock(self, vault):
         self.vault = vault
+        self.watch_archive(vault)
         locked_page = self.takeCentralWidget()
         self.unlock_panel.clear()
         self.unlock_panel = None
@@ -1739,7 +1826,12 @@ class MainWindow(QMainWindow):
         self.restore_scroll_timer.stop()
         self._pending_tree_scroll = None
         self.idle_timer.stop()
+        close_error = None
         if self.vault is not None:
-            self.vault.close()
+            close_error = self.close_vault(self.vault)
             self.vault = None
+        if close_error is not None or self._archive_conflicts:
+            self.hide()
+        self.show_archive_close_error(close_error)
+        self.show_archive_conflicts()
         event.accept()

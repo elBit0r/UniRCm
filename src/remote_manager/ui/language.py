@@ -9,6 +9,9 @@ ITALIAN = dict(line.split('\t', 1) for line in '''Connection details\tDettagli c
 Destination\tDestinazione
 Authentication\tAutenticazione
 Commands\tComandi
+First database opening\tPrima apertura del database
+Automatic connections are skipped the first time you open this database. Check each connection’s Commands tab for local and remote commands before connecting. Disable Connect at startup for any profile you do not want to run automatically next time.\tLe connessioni automatiche vengono saltate alla prima apertura di questo database. Prima di collegarti, controlla i comandi locali e remoti nella scheda Comandi di ogni connessione. Disattiva Collega all’avvio per i profili che non vuoi avviare automaticamente la prossima volta.
+Acknowledge the first-opening warning.\tConferma di aver letto l’avviso di prima apertura.
 Before connection\tPrima del collegamento
 After disconnection\tDopo la disconnessione
 After SSH login\tDopo l’accesso SSH
@@ -797,6 +800,9 @@ ITALIAN.update({
     'Host:': 'Host:',
     'Enter a hostname, SSH alias or IP address.': 'Inserisci un nome host, un alias SSH o un indirizzo IP.',
     'Show or hide the Quick Connect toolbar.': 'Mostra o nasconde la barra di connessione rapida.',
+    'Startup indicators': 'Indicatori di avvio automatico',
+    'Show or hide indicators for connections that start automatically.': 'Mostra o nasconde gli indicatori delle connessioni che si avviano automaticamente.',
+    'Unable to save startup indicator visibility.': 'Impossibile salvare la visibilità degli indicatori di avvio automatico.',
     'Unable to save Quick Connect visibility.': 'Impossibile salvare la visibilità della barra di connessione rapida.',
     'Drag to resize; double-click to hide the connections panel.': 'Trascina per ridimensionare; fai doppio clic per nascondere il pannello delle connessioni.',
     'Show or hide the connections panel, including search and tree tools.': 'Mostra o nasconde il pannello delle connessioni, inclusi ricerca e comandi dell’albero.',

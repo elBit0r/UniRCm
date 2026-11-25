@@ -10,6 +10,7 @@ def action_icon(widget, action):
         return QIcon.fromTheme('plug-connect', plug_connection_icon(widget.palette()))
     theme, fallback = {
         'Connection tree': ('view-list-tree', 'SP_DirIcon'),
+        'Startup indicators': ('system-run', 'SP_MediaPlay'),
         'Maximize': ('view-fullscreen', 'SP_TitleBarMaxButton'),
         'Detach': ('window-new', 'SP_TitleBarNormalButton'),
         'Close': ('window-close', 'SP_DialogCloseButton'),
@@ -70,6 +71,7 @@ def action_icon(widget, action):
         'New database…': ('document-new', 'SP_FileIcon'),
         'Remove from list': ('list-remove', 'SP_DialogDiscardButton'),
         'Cancel': ('dialog-cancel', 'SP_DialogCancelButton'),
+        'OK': ('dialog-ok', 'SP_DialogOkButton'),
     }[action]
     if action in ('Side by side', 'Stacked'):
         return layout_icon(widget, action)

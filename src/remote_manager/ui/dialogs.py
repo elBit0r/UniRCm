@@ -27,6 +27,20 @@ from remote_manager.terminal.private_key import read_imported_key
 from remote_manager.terminal.appearance import DEFAULT_OPTIONS, default_font
 
 
+def archive_conflict_message(error):
+    translate = QCoreApplication.translate
+    if error.preserved_path is None:
+        return translate('ArchiveConflict', 'The archive has changed. Its encrypted working copy was preserved.')
+    if error.archive_copy:
+        message = translate('ArchiveConflict',
+                            'The archive changed externally. Your local version was saved in a separate encrypted archive. '
+                            'Close this database and reopen the version you want to edit.')
+    else:
+        message = translate('ArchiveConflict',
+                            'The archive changed externally. Copy the preserved encrypted file out of the working directory before opening it.')
+    return f'{message}\n\n{error.preserved_path}'
+
+
 class VaultUnlockPanel(QWidget):
     unlocked = pyqtSignal(object)
     cancelled = pyqtSignal()
@@ -36,7 +50,7 @@ class VaultUnlockPanel(QWidget):
         self.path = path
         self.description = description
         self.is_archive = path.suffix.lower() == '.uni'
-        self.setup = description is not None or not path.exists() or path.stat().st_size == 0
+        self.setup = description is not None or not (path.exists() or path.is_symlink())
         style_surface(self)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -274,13 +288,13 @@ class VaultUnlockPanel(QWidget):
                 vault = ArchiveVault(self.path, self.password.text(), self.description,
                                      key_file=self.key_file.path, **options)
             else:
-                vault = Vault(self.path, self.password.text())
+                vault = Vault(self.path, self.password.text(), create=self.setup)
                 if self.setup:
                     vault.close()
-                    vault = Vault(self.path, self.password.text())
+                    vault = Vault(self.path, self.password.text(), create=False)
         except Exception as error:
             if isinstance(error, RecoveryConflict):
-                self.error.setText(self.tr('The archive has changed. Its encrypted working copy was preserved.'))
+                self.error.setText(archive_conflict_message(error))
             elif isinstance(error, ArchiveInUse):
                 self.error.setText(self.tr('This database is already open. Close it before trying again.'))
             elif isinstance(error, KeyFileError):

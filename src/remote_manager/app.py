@@ -26,7 +26,8 @@ def main() -> int:
     chooser = DatabaseChooser(path)
     if not chooser.exec():
         return 0
-    window = MainWindow(chooser.vault, chooser.path)
+    window = MainWindow(chooser.vault, chooser.path,
+                        allow_startup_connections=chooser.allow_startup_connections)
     window.show()
     app.setQuitOnLastWindowClosed(True)
     return app.exec()

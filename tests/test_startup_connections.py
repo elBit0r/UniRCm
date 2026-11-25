@@ -1,20 +1,57 @@
+from PyQt6.QtCore import QSettings, QTimer
+from PyQt6.QtWidgets import QApplication, QMessageBox
+
+from remote_manager.storage.archive import ArchiveVault
 from remote_manager.storage.vault import Vault
+from remote_manager.ui import databases
 from remote_manager.ui.main_window import MainWindow
 from remote_manager.ui.dialogs import ProfileDialog
 
 
 def test_startup_selection_and_encrypted_persistence(qtbot, tmp_path, monkeypatch):
-    path = tmp_path / 'vault.db'
-    vault = Vault(path, 'master')
+    settings_path = str(tmp_path / 'preferences.ini')
+    monkeypatch.setattr(databases, 'QSettings',
+                        lambda: QSettings(settings_path, QSettings.Format.IniFormat))
+    path = tmp_path / 'vault.uni'
+    vault = ArchiveVault(path, 'master', 'Received vault')
     base = dict(host='localhost', username='user', port=22, identity_file='')
-    auto_id = vault.save(dict(base, name='Automatic', connect_at_startup=True))
+    auto_id = vault.save(dict(base, name='Automatic', connect_at_startup=True,
+                              before_connect_command='true'))
     vault.save(dict(base, name='Manual'))
     vault.close()
-    vault = Vault(path, 'master')
     opened = []
+    warnings = []
     monkeypatch.setattr(MainWindow, 'open_profile', lambda self, profile: opened.append(profile['id']))
-    window = MainWindow(vault, path)
-    qtbot.addWidget(window)
+
+    def acknowledge():
+        warning = QApplication.activeModalWidget()
+        if isinstance(warning, QMessageBox):
+            warnings.append(warning.text())
+            warning.button(QMessageBox.StandardButton.Ok).click()
+
+    def open_window(*, first_open):
+        chooser = databases.DatabaseChooser(tmp_path / 'unused.db')
+        qtbot.addWidget(chooser)
+        chooser.open_path(path)
+        chooser.unlock_panel.password.setText('master')
+        if first_open:
+            QTimer.singleShot(0, acknowledge)
+        chooser.unlock_panel.submit()
+        assert chooser.allow_startup_connections is not first_open
+        window = MainWindow(chooser.vault, chooser.path,
+                            allow_startup_connections=chooser.allow_startup_connections)
+        qtbot.addWidget(window)
+        return window
+
+    window = open_window(first_open=True)
+    assert len(warnings) == 1 and 'Commands tab' in warnings[0]
+    QApplication.processEvents()
+    assert opened == []
+    assert window.vault.profiles(auto_id)[0]['before_connect_command'] == 'true'
+    window.close()
+
+    window = open_window(first_open=False)
+    vault = window.vault
     qtbot.waitUntil(lambda: opened == [auto_id])
     saved = vault.profiles(auto_id)[0]
     dialog = ProfileDialog(saved, window, vault.folders(), save_callback=vault.save)
@@ -22,6 +59,13 @@ def test_startup_selection_and_encrypted_persistence(qtbot, tmp_path, monkeypatc
     dialog.connect_at_startup.setChecked(False)
     dialog.save()
     assert not vault.profiles(auto_id)[0]['connect_at_startup']
+    window.close()
+
+    path.unlink()
+    ArchiveVault(path, 'master', 'Different vault').close()
+    window = open_window(first_open=True)
+    assert len(warnings) == 2
+    window.close()
 
 
 def test_ssh_reconnect_preferences_and_password_visibility(qtbot, tmp_path):

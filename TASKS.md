@@ -31,6 +31,25 @@ current features.
 
 ## Recorded verification
 
+- **Legacy vault permissions.** Linux tests verified that an invalid password
+  leaves the database mode intact, a valid password restores mode `0600`, and
+  symbolic links and empty existing files are rejected.
+
+- **Startup indicators.** Linux Qt tests verified that only auto-connect
+  profiles display the icon and that the View toggle persists per vault.
+
+- **First vault opening.** Linux Qt tests verified the command-review warning,
+  skipped auto-connect on first opening, restored startup behavior on reopening,
+  and detected an independently created archive at the same path.
+
+- **Archive close.** Linux Qt tests simulated a full disk during auto-lock
+  and shutdown. SQLCipher closed, the encrypted working copy was retained,
+  and reopening recovered the pending changes.
+
+- **Archive publication.** A Linux Qt regression test verified that an external
+  replacement survives a local save, both encrypted versions reopen, and the
+  conflict warning displays the path to the local copy.
+
 - **Legacy vault and SFTP.** Linux tests verified shared directory permissions
   with both valid and invalid vault passwords. Loopback OpenSSH verified upload
   success with a listing warning and download success without a listing request.
