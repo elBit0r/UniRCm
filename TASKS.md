@@ -10,6 +10,7 @@ current features.
 - [ ] Review the native desktop UI at high DPI, including tree and workspace
   dragging, splitter gestures and terminal selection.
 - [ ] Measure responsiveness and CPU usage with continuous terminal output.
+- [ ] Evaluate bounded SFTP request pipelining and verify cancellation.
 - [ ] Verify remote RDP mouse wheel input, visual options, administrative
   sessions and changed-certificate acceptance limited to the active session.
 - [ ] Verify Telnet login against a real router or switch.
@@ -29,6 +30,12 @@ current features.
   TLS, clipboard, fullscreen and additional encodings are deferred.
 
 ## Recorded verification
+
+- **Legacy vault and SFTP.** Linux tests verified shared directory permissions
+  with both valid and invalid vault passwords. Loopback OpenSSH verified upload
+  success with a listing warning and download success without a listing request.
+  A 1 MiB loopback transfer with 100 ms of added wait per data request measured
+  315 KiB/s upload and 306 KiB/s download.
 
 - **SSH Unicode.** A real session to `172.16.10.213` in the Linux embedded
   terminal displayed the pre-authentication banner and the full weather line.

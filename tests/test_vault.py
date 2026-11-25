@@ -3,7 +3,25 @@ import stat
 
 import pytest
 
-from remote_manager.storage.vault import Vault
+from remote_manager.storage.vault import Vault, sqlcipher
+
+
+@pytest.mark.parametrize('password', ['master', 'incorrect'])
+def test_legacy_vault_preserves_shared_directory_permissions(tmp_path, password):
+    directory = tmp_path / 'shared'
+    directory.mkdir()
+    path = directory / 'legacy.db'
+    Vault(path, 'master').close()
+    directory.chmod(0o755)
+
+    if password == 'master':
+        Vault(path, password).close()
+    else:
+        with pytest.raises(sqlcipher.DatabaseError):
+            Vault(path, password)
+
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o755
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 def test_encrypted_profile_crud_and_unlock(tmp_path):

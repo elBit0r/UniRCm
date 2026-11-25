@@ -393,8 +393,18 @@ class FileTransferDialog(QDialog):
             for local, name in zip(files, names):
                 client.upload(local, posixpath.join(remote_path, name),
                               lambda done, total: job.progress.emit(name, done, total), name in conflicts)
-            return remote_path, client.listing(remote_path)
-        self.start(operation, self.completed)
+            try:
+                return client.listing(remote_path), None
+            except (OSError, ValueError, KeyError) as error:
+                return None, str(error)
+
+        def complete(result):
+            entries, refresh_error = result
+            if entries is not None:
+                self.listed((remote_path, entries))
+            self.completed(refresh_error=refresh_error)
+
+        self.start(operation, complete)
 
     def download(self):
         entries = [item.data(0, Qt.ItemDataRole.UserRole) for item in self.tree.selectedItems()]
@@ -413,8 +423,7 @@ class FileTransferDialog(QDialog):
             for name, local in targets:
                 client.download(posixpath.join(remote_path, name), local,
                                 lambda done, total: job.progress.emit(name, done, total), local in conflicts)
-            return remote_path, client.listing(remote_path)
-        self.start(operation, self.completed)
+        self.start(operation, lambda result: self.completed())
 
     def confirm(self, text):
         box = QMessageBox(QMessageBox.Icon.Question, self.tr('SSH file manager'), text,
@@ -431,9 +440,11 @@ class FileTransferDialog(QDialog):
         box.setDefaultButton(QMessageBox.StandardButton.No)
         return box.exec() == QMessageBox.StandardButton.Yes
 
-    def completed(self, result):
-        self.listed(result)
-        self.status.setText(self.tr('Transfer completed.'))
+    def completed(self, *, refresh_error=None):
+        message = self.tr('Transfer completed.')
+        if refresh_error is not None:
+            message += '\n' + self.tr('Could not refresh remote directory: %1').replace('%1', self.tr(refresh_error))
+        self.status.setText(message)
         self.gauge.setRange(0, 100)
         self.gauge.setValue(100)
 

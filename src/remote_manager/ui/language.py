@@ -176,6 +176,7 @@ Replace existing files?	Sostituire i file esistenti?
 Select regular files to download.	Seleziona i file da scaricare.
 Download destination	Destinazione del download
 Transfer completed.	Trasferimento completato.
+Could not refresh remote directory: %1	Impossibile aggiornare la directory remota: %1
 bytes	byte
 Cancelling…	Annullamento…
 Connect at startup	Collega all’avvio

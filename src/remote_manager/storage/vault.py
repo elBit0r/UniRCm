@@ -94,7 +94,6 @@ class Vault:
         path = Path(path)
         self.path = path
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(path.parent, 0o700)
         # Reserve new files privately before SQLCipher opens them.
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600) if not path.exists() else None
         if fd is not None:

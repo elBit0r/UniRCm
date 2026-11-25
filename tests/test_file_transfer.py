@@ -99,8 +99,15 @@ def test_browser_upload_download_and_drop(qtbot, terminal, tmp_path, monkeypatch
     qtbot.waitUntil(lambda: dialog.job is None, timeout=10000)
     assert dialog.remote_path == str(remote_dir)
     monkeypatch.setattr(dialog, 'confirm', lambda text: True)
-    dialog.upload([str(source)])
-    qtbot.waitUntil(lambda: dialog.job is None, timeout=10000)
+
+    def fail_listing(client, path):
+        raise PermissionError('Listing denied')
+
+    with monkeypatch.context() as refresh:
+        refresh.setattr(SFTPClient, 'listing', fail_listing)
+        dialog.upload([str(source)])
+        qtbot.waitUntil(lambda: dialog.job is None, timeout=10000)
+    assert dialog.status.text() == 'Transfer completed.\nCould not refresh remote directory: Listing denied'
     assert (remote_dir / source.name).read_bytes() == source.read_bytes()
     remote_file = remote_dir / source.name
     remote_file.chmod(0o640)
@@ -125,9 +132,12 @@ def test_browser_upload_download_and_drop(qtbot, terminal, tmp_path, monkeypatch
     dialog.show_file_menu(dialog.tree.visualItemRect(item).center())
     assert dialog.download_action in menus[0]
     monkeypatch.setattr(QFileDialog, 'getExistingDirectory', lambda *args: str(local_dir))
-    dialog.download_action.trigger()
-    qtbot.waitUntil(lambda: dialog.job is None, timeout=10000)
+    with monkeypatch.context() as refresh:
+        refresh.setattr(SFTPClient, 'listing', fail_listing)
+        dialog.download_action.trigger()
+        qtbot.waitUntil(lambda: dialog.job is None, timeout=10000)
     assert (local_dir / source.name).read_bytes() == source.read_bytes()
+    assert dialog.status.text() == 'Transfer completed.'
     assert dialog.gauge.value() == 100
     called = []
     monkeypatch.setattr(terminal, 'open_file_transfer', lambda **kwargs: called.append(kwargs))
